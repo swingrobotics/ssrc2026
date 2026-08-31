@@ -13,7 +13,9 @@ import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.trajectory.Trajectory;
 import edu.wpi.first.math.trajectory.TrajectoryConfig;
 import edu.wpi.first.math.trajectory.TrajectoryGenerator;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.XboxController;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import frc.robot.Constants.AutoConstants;
 import frc.robot.Constants.DriveConstants;
 import frc.robot.Constants.OIConstants;
@@ -24,6 +26,7 @@ import edu.wpi.first.wpilibj2.command.RunCommand;
 import edu.wpi.first.wpilibj2.command.SwerveControllerCommand;
 import edu.wpi.first.wpilibj2.command.button.JoystickButton;
 import java.util.List;
+import org.photonvision.PhotonCamera;
 
 /*
  * This class is where the bulk of the robot should be declared. Since Command-based is a
@@ -38,6 +41,24 @@ public class RobotContainer {
   // The driver's controller
   XboxController m_driverController = new XboxController(OIConstants.kDriverControllerPort);
 
+  // PhotonVision camera nickname. This must match the camera nickname in the PhotonVision UI.
+  private static final String kPhotonCameraName = "photonvision";
+  private final PhotonCamera m_photonCamera = new PhotonCamera(kPhotonCameraName);
+
+  // Vision auto-aim settings.
+  // PhotonVision yaw is positive when the target is to the left.
+  private static final double kVisionTurnKp = 0.02;
+  private static final double kVisionMaxRotationCommand = 0.60;
+  private static final double kVisionYawToleranceDegrees = 1.0;
+  private static final double kVisionTargetTimeoutSeconds = 0.25;
+
+  // Vision auto-aim state.
+  private boolean m_visionAlignEnabled = false;
+  private boolean m_visionTargetVisible = false;
+  private int m_lockedVisionTargetId = -1;
+  private double m_visionTargetYawDegrees = 0.0;
+  private double m_lastVisionTargetTimestamp = -1.0;
+
   /**
    * The container for the robot. Contains subsystems, OI devices, and commands.
    */
@@ -45,21 +66,26 @@ public class RobotContainer {
     // Configure the button bindings
     configureButtonBindings();
 
+    SmartDashboard.putBoolean("Vision Align Enabled", false);
+    SmartDashboard.putBoolean("Vision Target Visible", false);
+    SmartDashboard.putNumber("Vision Locked Tag ID", -1);
+    SmartDashboard.putNumber("Vision Target Yaw", 0.0);
+
     // Configure default commands
     m_robotDrive.setDefaultCommand(
         // Left stick controls translation relative to the robot.
-        // Left trigger rotates left (counterclockwise), right trigger rotates right (clockwise).
+        // Triggers control manual rotation unless vision auto-align is enabled.
         new RunCommand(
             () -> m_robotDrive.drive(
                 -MathUtil.applyDeadband(m_driverController.getLeftY(), OIConstants.kDriveDeadband),
                 -MathUtil.applyDeadband(m_driverController.getLeftX(), OIConstants.kDriveDeadband),
-                getTriggerRotation(),
+                getDriveRotationCommand(),
                 false),
             m_robotDrive));
   }
 
   /**
-   * Returns the rotation command from the controller triggers.
+   * Returns the manual rotation command from the controller triggers.
    * Left trigger = counterclockwise, right trigger = clockwise.
    * Trigger pressure controls rotation speed.
    */
@@ -72,12 +98,110 @@ public class RobotContainer {
   }
 
   /**
+   * Returns either manual trigger rotation or PhotonVision auto-aim rotation.
+   */
+  private double getDriveRotationCommand() {
+    if (!m_visionAlignEnabled) {
+      return getTriggerRotation();
+    }
+
+    updateVisionTarget();
+
+    if (!m_visionTargetVisible) {
+      // Do not rotate using stale target information.
+      return 0.0;
+    }
+
+    // Stop hunting once the tag is very close to the center of the camera image.
+    if (Math.abs(m_visionTargetYawDegrees) <= kVisionYawToleranceDegrees) {
+      return 0.0;
+    }
+
+    // Positive PhotonVision yaw means the target is to the left.
+    // Positive swerve rotation is counterclockwise, so the signs match directly.
+    return MathUtil.clamp(
+        m_visionTargetYawDegrees * kVisionTurnKp,
+        -kVisionMaxRotationCommand,
+        kVisionMaxRotationCommand);
+  }
+
+  /**
+   * Reads the newest PhotonVision frame and tracks one AprilTag continuously.
+   * When auto-align is first enabled, the best visible AprilTag is locked by ID.
+   */
+  private void updateVisionTarget() {
+    var results = m_photonCamera.getAllUnreadResults();
+
+    if (!results.isEmpty()) {
+      var result = results.get(results.size() - 1);
+      boolean foundLockedTarget = false;
+
+      if (result.hasTargets()) {
+        if (m_lockedVisionTargetId < 0) {
+          // Lock onto the best tag visible when auto-align starts.
+          var target = result.getBestTarget();
+          if (target != null && target.getFiducialId() >= 0) {
+            m_lockedVisionTargetId = target.getFiducialId();
+            m_visionTargetYawDegrees = target.getYaw();
+            foundLockedTarget = true;
+          }
+        } else {
+          // Keep following the same tag so we do not jump between multiple visible tags.
+          for (var target : result.getTargets()) {
+            if (target.getFiducialId() == m_lockedVisionTargetId) {
+              m_visionTargetYawDegrees = target.getYaw();
+              foundLockedTarget = true;
+              break;
+            }
+          }
+        }
+      }
+
+      m_visionTargetVisible = foundLockedTarget;
+      if (foundLockedTarget) {
+        m_lastVisionTargetTimestamp = Timer.getFPGATimestamp();
+      }
+    }
+
+    // If frames stop arriving, do not continue driving from old yaw data.
+    if (m_visionTargetVisible
+        && (Timer.getFPGATimestamp() - m_lastVisionTargetTimestamp) > kVisionTargetTimeoutSeconds) {
+      m_visionTargetVisible = false;
+    }
+
+    SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
+    SmartDashboard.putBoolean("Vision Target Visible", m_visionTargetVisible);
+    SmartDashboard.putNumber("Vision Locked Tag ID", m_lockedVisionTargetId);
+    SmartDashboard.putNumber("Vision Target Yaw", m_visionTargetYawDegrees);
+  }
+
+  /** Toggle PhotonVision AprilTag auto-alignment on/off. */
+  private void toggleVisionAlign() {
+    m_visionAlignEnabled = !m_visionAlignEnabled;
+
+    // Start fresh every time auto-align is enabled or disabled.
+    m_lockedVisionTargetId = -1;
+    m_visionTargetVisible = false;
+    m_visionTargetYawDegrees = 0.0;
+    m_lastVisionTargetTimestamp = -1.0;
+
+    SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
+    SmartDashboard.putBoolean("Vision Target Visible", false);
+    SmartDashboard.putNumber("Vision Locked Tag ID", -1);
+    SmartDashboard.putNumber("Vision Target Yaw", 0.0);
+  }
+
+  /**
    * Use this method to define your button->command mappings. Buttons can be
    * created by instantiating a {@link edu.wpi.first.wpilibj.GenericHID} or one of its
    * subclasses ({@link edu.wpi.first.wpilibj.Joystick} or {@link XboxController}).
    */
   private void configureButtonBindings() {
-    // Restore the original right-bumper X-lock behavior.
+    // A button toggles AprilTag auto-alignment.
+    new JoystickButton(m_driverController, XboxController.Button.kA.value)
+        .onTrue(new InstantCommand(this::toggleVisionAlign));
+
+    // Original right-bumper X-lock behavior.
     new JoystickButton(m_driverController, XboxController.Button.kRightBumper.value)
         .whileTrue(new RunCommand(
             () -> m_robotDrive.setX(),
