@@ -42,7 +42,7 @@ public class RobotContainer {
   XboxController m_driverController = new XboxController(OIConstants.kDriverControllerPort);
 
   // PhotonVision camera nickname. This must match the camera nickname in the PhotonVision UI.
-  private static final String kPhotonCameraName = "photonvision";
+  private static final String kPhotonCameraName = "PC_Camera";
   private final PhotonCamera m_photonCamera = new PhotonCamera(kPhotonCameraName);
 
   // Vision auto-aim settings.
