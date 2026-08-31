@@ -48,24 +48,27 @@ public class RobotContainer {
     // Configure default commands
     m_robotDrive.setDefaultCommand(
         // Left stick controls translation relative to the robot.
-        // LB rotates left (counterclockwise), RB rotates right (clockwise).
+        // Left trigger rotates left (counterclockwise), right trigger rotates right (clockwise).
         new RunCommand(
             () -> m_robotDrive.drive(
                 -MathUtil.applyDeadband(m_driverController.getLeftY(), OIConstants.kDriveDeadband),
                 -MathUtil.applyDeadband(m_driverController.getLeftX(), OIConstants.kDriveDeadband),
-                getBumperRotation(),
+                getTriggerRotation(),
                 false),
             m_robotDrive));
   }
 
   /**
-   * Returns the rotation command from the controller bumpers.
-   * LB = counterclockwise, RB = clockwise, both/neither = no rotation.
+   * Returns the rotation command from the controller triggers.
+   * Left trigger = counterclockwise, right trigger = clockwise.
+   * Trigger pressure controls rotation speed.
    */
-  private double getBumperRotation() {
-    double leftRotation = m_driverController.getLeftBumperButton() ? 1.0 : 0.0;
-    double rightRotation = m_driverController.getRightBumperButton() ? -1.0 : 0.0;
-    return leftRotation + rightRotation;
+  private double getTriggerRotation() {
+    double leftRotation = MathUtil.applyDeadband(
+        m_driverController.getLeftTriggerAxis(), OIConstants.kDriveDeadband);
+    double rightRotation = MathUtil.applyDeadband(
+        m_driverController.getRightTriggerAxis(), OIConstants.kDriveDeadband);
+    return leftRotation - rightRotation;
   }
 
   /**
@@ -74,6 +77,12 @@ public class RobotContainer {
    * subclasses ({@link edu.wpi.first.wpilibj.Joystick} or {@link XboxController}).
    */
   private void configureButtonBindings() {
+    // Restore the original right-bumper X-lock behavior.
+    new JoystickButton(m_driverController, XboxController.Button.kRightBumper.value)
+        .whileTrue(new RunCommand(
+            () -> m_robotDrive.setX(),
+            m_robotDrive));
+
     new JoystickButton(m_driverController, XboxController.Button.kStart.value)
         .onTrue(new InstantCommand(
             () -> m_robotDrive.zeroHeading(),
