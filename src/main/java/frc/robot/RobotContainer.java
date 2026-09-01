@@ -13,7 +13,6 @@ import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.trajectory.Trajectory;
 import edu.wpi.first.math.trajectory.TrajectoryConfig;
 import edu.wpi.first.math.trajectory.TrajectoryGenerator;
-import edu.wpi.first.math.trajectory.TrapezoidProfile;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
@@ -46,29 +45,19 @@ public class RobotContainer {
   private static final String kPhotonCameraName = "PC_Camera";
   private final PhotonCamera m_photonCamera = new PhotonCamera(kPhotonCameraName);
 
-  // Smooth vision-heading controller.
-  // PhotonVision supplies yaw; the ADIS16470 gyro then handles the fast, smooth heading control.
-  private static final double kVisionHeadingKp = 0.015;
-  private static final double kVisionMaxTurnRateDegPerSec = Math.toDegrees(DriveConstants.kMaxAngularSpeed);
-  private static final double kVisionMaxTurnAccelDegPerSecSq = 540.0;
-  private static final double kVisionYawToleranceDegrees = 1.0;
-  private static final double kVisionTargetHoldSeconds = 0.20;
+  // PhotonVision's official aiming example uses target yaw with a proportional gain.
+  // DriveSubsystem.drive() accepts a normalized rotation command and scales it by max angular speed.
+  private static final double kVisionTurnKp = 0.01;
 
-  private final ProfiledPIDController m_visionHeadingController = new ProfiledPIDController(
-      kVisionHeadingKp,
-      0.0,
-      0.0,
-      new TrapezoidProfile.Constraints(
-          kVisionMaxTurnRateDegPerSec,
-          kVisionMaxTurnAccelDegPerSecSq));
+  // Keep the last valid target briefly between camera frames so the robot command does not
+  // alternate between turning and zero when the robot loop runs faster than the camera FPS.
+  private static final double kVisionTargetHoldSeconds = 0.20;
 
   // Vision auto-align state.
   private boolean m_visionAlignEnabled = false;
   private boolean m_visionTargetVisible = false;
   private double m_visionTargetYawDegrees = 0.0;
-  private double m_visionGoalHeadingDegrees = 0.0;
   private double m_lastVisionTargetTimestamp = -1.0;
-  private double m_visionRotationCommand = 0.0;
 
   /**
    * The container for the robot. Contains subsystems, OI devices, and commands.
@@ -76,15 +65,9 @@ public class RobotContainer {
   public RobotContainer() {
     configureButtonBindings();
 
-    // Heading is an angle, so make the controller use the shortest path across -180/180.
-    m_visionHeadingController.enableContinuousInput(-180.0, 180.0);
-    m_visionHeadingController.setTolerance(kVisionYawToleranceDegrees, 5.0);
-
     SmartDashboard.putBoolean("Vision Align Enabled", false);
     SmartDashboard.putBoolean("Vision Target Visible", false);
     SmartDashboard.putNumber("Vision Target Yaw", 0.0);
-    SmartDashboard.putNumber("Vision Goal Heading", 0.0);
-    SmartDashboard.putNumber("Vision Rotation Command", 0.0);
 
     m_robotDrive.setDefaultCommand(
         new RunCommand(
@@ -109,36 +92,29 @@ public class RobotContainer {
   }
 
   /**
-   * Reads the newest PhotonVision frame. A valid target updates an absolute gyro heading goal.
-   * Brief camera-frame gaps keep the last goal so the drivetrain does not repeatedly stop/start.
+   * Reads the newest PhotonVision result using the same pattern as PhotonVision's official
+   * "Aiming at a Target" example: getAllUnreadResults(), use the newest result, then read yaw.
+   * If there is no new camera frame, keep the most recent valid yaw for a short time instead of
+   * immediately commanding zero rotation.
    */
   private void updateVisionTarget() {
     var results = m_photonCamera.getAllUnreadResults();
-
     if (!results.isEmpty()) {
+      // Camera processed at least one new frame since the last call. Use the newest frame.
       var result = results.get(results.size() - 1);
 
       if (result.hasTargets()) {
+        // For this first version, aim at PhotonVision's best visible AprilTag.
         var target = result.getBestTarget();
         if (target != null && target.getFiducialId() >= 0) {
           m_visionTargetYawDegrees = target.getYaw();
           m_lastVisionTargetTimestamp = Timer.getFPGATimestamp();
-
-          if (m_visionAlignEnabled) {
-            double currentHeading = m_robotDrive.getHeading();
-
-            // PhotonVision yaw is positive-left, while the existing drivetrain's working
-            // auto-aim direction is -yaw. Convert that relative yaw into an absolute gyro goal.
-            m_visionGoalHeadingDegrees = MathUtil.inputModulus(
-                currentHeading - m_visionTargetYawDegrees,
-                -180.0,
-                180.0);
-            m_visionHeadingController.setGoal(m_visionGoalHeadingDegrees);
-          }
         }
       }
     }
 
+    // The robot loop can run faster than PhotonVision produces frames. Keep using the most recent
+    // valid target between frames, and only stop after the target has actually been gone long enough.
     m_visionTargetVisible = m_lastVisionTargetTimestamp >= 0.0
         && (Timer.getFPGATimestamp() - m_lastVisionTargetTimestamp) <= kVisionTargetHoldSeconds;
 
@@ -149,72 +125,36 @@ public class RobotContainer {
     SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
     SmartDashboard.putBoolean("Vision Target Visible", m_visionTargetVisible);
     SmartDashboard.putNumber("Vision Target Yaw", m_visionTargetYawDegrees);
-    SmartDashboard.putNumber("Vision Goal Heading", m_visionGoalHeadingDegrees);
-    SmartDashboard.putNumber("Vision Rotation Command", m_visionRotationCommand);
   }
 
   /**
-   * Manual trigger rotation when auto-align is off. When auto-align is on, PhotonVision updates the
-   * desired heading and WPILib's ProfiledPIDController makes the rotation fast but acceleration-
-   * limited and smooth.
+   * Returns manual trigger rotation when auto-align is off. When auto-align is on and an
+   * AprilTag is visible, it overrides manual rotation with PhotonVision yaw-based aiming.
    */
   private double getDriveRotationCommand() {
     updateVisionTarget();
 
     if (!m_visionAlignEnabled) {
-      m_visionRotationCommand = getTriggerRotation();
-      return m_visionRotationCommand;
+      return getTriggerRotation();
     }
 
-    double currentHeading = m_robotDrive.getHeading();
-
     if (!m_visionTargetVisible) {
-      // The tag has been gone longer than the short dropout window. Stop auto-rotation safely.
-      m_visionHeadingController.reset(currentHeading, m_robotDrive.getTurnRate());
-      m_visionHeadingController.setGoal(currentHeading);
-      m_visionGoalHeadingDegrees = currentHeading;
-      m_visionRotationCommand = 0.0;
+      // Auto-align is enabled but the target has been gone longer than the hold window.
       return 0.0;
     }
 
-    // ProfiledPIDController smoothly moves its internal heading setpoint toward the vision goal.
-    // The profile velocity becomes the main angular-speed command; P corrects gyro tracking error.
-    double headingCorrection = m_visionHeadingController.calculate(currentHeading);
-    double profiledTurnCommand =
-        m_visionHeadingController.getSetpoint().velocity / kVisionMaxTurnRateDegPerSec;
-
-    m_visionRotationCommand = MathUtil.clamp(
-        profiledTurnCommand + headingCorrection,
+    // PhotonVision official example:
+    // turn = -1.0 * targetYaw * VISION_TURN_kP * maxAngularSpeed
+    // Our DriveSubsystem applies maxAngularSpeed internally, so return the normalized part here.
+    return MathUtil.clamp(
+        -1.0 * m_visionTargetYawDegrees * kVisionTurnKp,
         -1.0,
         1.0);
-
-    // Once centered and nearly stopped, remove tiny residual commands that can cause chatter.
-    if (Math.abs(m_visionTargetYawDegrees) <= kVisionYawToleranceDegrees
-        && Math.abs(m_robotDrive.getTurnRate()) <= 5.0
-        && m_visionHeadingController.atGoal()) {
-      m_visionRotationCommand = 0.0;
-    }
-
-    return m_visionRotationCommand;
   }
 
   /** Toggle PhotonVision AprilTag auto-alignment on/off. */
   private void toggleVisionAlign() {
     m_visionAlignEnabled = !m_visionAlignEnabled;
-
-    double currentHeading = m_robotDrive.getHeading();
-    m_visionHeadingController.reset(currentHeading, m_robotDrive.getTurnRate());
-    m_visionHeadingController.setGoal(currentHeading);
-    m_visionGoalHeadingDegrees = currentHeading;
-    m_visionRotationCommand = 0.0;
-
-    // Require a fresh target after enabling so an old frame cannot start a turn.
-    if (m_visionAlignEnabled) {
-      m_lastVisionTargetTimestamp = -1.0;
-      m_visionTargetVisible = false;
-      m_visionTargetYawDegrees = 0.0;
-    }
-
     SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
   }
 
