@@ -16,6 +16,7 @@ import edu.wpi.first.math.kinematics.SwerveModulePosition;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
 import edu.wpi.first.wpilibj.ADIS16470_IMU;
 import edu.wpi.first.wpilibj.ADIS16470_IMU.IMUAxis;
+import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import frc.robot.Constants.DriveConstants;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
@@ -45,6 +46,9 @@ public class DriveSubsystem extends SubsystemBase {
   // The gyro sensor
   private final ADIS16470_IMU m_gyro = new ADIS16470_IMU();
 
+  // Field visualization for checking odometry before PathPlanner integration.
+  private final Field2d m_field = new Field2d();
+
   // Odometry class for tracking robot pose
   SwerveDriveOdometry m_odometry = new SwerveDriveOdometry(
       DriveConstants.kDriveKinematics,
@@ -60,6 +64,9 @@ public class DriveSubsystem extends SubsystemBase {
   public DriveSubsystem() {
     // Usage reporting for MAXSwerve template
     HAL.report(tResourceType.kResourceType_RobotDrive, tInstances.kRobotDriveSwerve_MaxSwerve);
+
+    // Publish the robot pose as a Field2d object on SmartDashboard.
+    SmartDashboard.putData("Field", m_field);
   }
 
   @Override
@@ -77,6 +84,13 @@ public class DriveSubsystem extends SubsystemBase {
     // ADIS16470 test values. These update continuously on SmartDashboard.
     SmartDashboard.putNumber("ADIS Heading", getHeading());
     SmartDashboard.putNumber("ADIS Turn Rate", getTurnRate());
+
+    // Show the estimated field pose so we can verify odometry before PathPlanner.
+    Pose2d pose = getPose();
+    m_field.setRobotPose(pose);
+    SmartDashboard.putNumber("Pose X", pose.getX());
+    SmartDashboard.putNumber("Pose Y", pose.getY());
+    SmartDashboard.putNumber("Pose Heading", pose.getRotation().getDegrees());
   }
 
   /**
