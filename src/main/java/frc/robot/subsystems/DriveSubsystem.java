@@ -16,6 +16,7 @@ import edu.wpi.first.math.kinematics.SwerveModulePosition;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
 import edu.wpi.first.wpilibj.ADIS16470_IMU;
 import edu.wpi.first.wpilibj.ADIS16470_IMU.IMUAxis;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import frc.robot.Constants.DriveConstants;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 
@@ -72,6 +73,10 @@ public class DriveSubsystem extends SubsystemBase {
             m_rearLeft.getPosition(),
             m_rearRight.getPosition()
         });
+
+    // ADIS16470 test values. These update continuously on SmartDashboard.
+    SmartDashboard.putNumber("ADIS Heading", getHeading());
+    SmartDashboard.putNumber("ADIS Turn Rate", getTurnRate());
   }
 
   /**
@@ -139,7 +144,7 @@ public class DriveSubsystem extends SubsystemBase {
   }
 
   /**
-   * Sets the swerve ModuleStates.
+   * Sets the Swerve ModuleStates.
    *
    * @param desiredStates The desired SwerveModule states.
    */
