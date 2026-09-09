@@ -53,6 +53,9 @@ public class RobotContainer {
   // alternate between turning and zero when the robot loop runs faster than the camera FPS.
   private static final double kVisionTargetHoldSeconds = 0.20;
 
+  // Driving mode. False keeps the current robot-relative behavior by default.
+  private boolean m_fieldRelativeEnabled = false;
+
   // Vision auto-align state.
   private boolean m_visionAlignEnabled = false;
   private boolean m_visionTargetVisible = false;
@@ -65,6 +68,7 @@ public class RobotContainer {
   public RobotContainer() {
     configureButtonBindings();
 
+    SmartDashboard.putBoolean("Field Relative Enabled", m_fieldRelativeEnabled);
     SmartDashboard.putBoolean("Vision Align Enabled", false);
     SmartDashboard.putBoolean("Vision Target Visible", false);
     SmartDashboard.putNumber("Vision Target Yaw", 0.0);
@@ -75,7 +79,7 @@ public class RobotContainer {
                 -MathUtil.applyDeadband(m_driverController.getLeftY(), OIConstants.kDriveDeadband),
                 -MathUtil.applyDeadband(m_driverController.getLeftX(), OIConstants.kDriveDeadband),
                 getDriveRotationCommand(),
-                false),
+                m_fieldRelativeEnabled),
             m_robotDrive));
   }
 
@@ -152,6 +156,12 @@ public class RobotContainer {
         1.0);
   }
 
+  /** Toggle between robot-relative and field-relative translation control. */
+  private void toggleFieldRelative() {
+    m_fieldRelativeEnabled = !m_fieldRelativeEnabled;
+    SmartDashboard.putBoolean("Field Relative Enabled", m_fieldRelativeEnabled);
+  }
+
   /** Toggle PhotonVision AprilTag auto-alignment on/off. */
   private void toggleVisionAlign() {
     m_visionAlignEnabled = !m_visionAlignEnabled;
@@ -165,6 +175,10 @@ public class RobotContainer {
     // User-requested toggle behavior: press A once for ON, press A again for OFF.
     new JoystickButton(m_driverController, XboxController.Button.kA.value)
         .onTrue(new InstantCommand(this::toggleVisionAlign));
+
+    // B toggles robot-relative / field-relative translation.
+    new JoystickButton(m_driverController, XboxController.Button.kB.value)
+        .onTrue(new InstantCommand(this::toggleFieldRelative));
 
     // Original right-bumper X-lock behavior.
     new JoystickButton(m_driverController, XboxController.Button.kRightBumper.value)
