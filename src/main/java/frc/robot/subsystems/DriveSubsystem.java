@@ -25,6 +25,9 @@ import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.DriveConstants;
+import java.util.List;
+import java.util.Locale;
+import java.util.StringJoiner;
 
 public class DriveSubsystem extends SubsystemBase {
   // Create MAXSwerveModules
@@ -69,6 +72,12 @@ public class DriveSubsystem extends SubsystemBase {
   public DriveSubsystem() {
     HAL.report(tResourceType.kResourceType_RobotDrive, tInstances.kRobotDriveSwerve_MaxSwerve);
     SmartDashboard.putData("Field", m_field);
+    SmartDashboard.putString("PathPlanner Active Path", "");
+    SmartDashboard.putNumber("PathPlanner Path Points", 0);
+    SmartDashboard.putBoolean("PathPlanner Target Valid", false);
+    SmartDashboard.putNumber("PathPlanner Target X", 0.0);
+    SmartDashboard.putNumber("PathPlanner Target Y", 0.0);
+    SmartDashboard.putNumber("PathPlanner Target Heading", 0.0);
 
     configurePathPlanner();
   }
@@ -93,8 +102,34 @@ public class DriveSubsystem extends SubsystemBase {
           },
           this);
 
+      PathPlannerLogging.setLogCurrentPoseCallback(
+          pose -> {
+            m_field.setRobotPose(pose);
+            SmartDashboard.putNumber("PathPlanner Current X", pose.getX());
+            SmartDashboard.putNumber("PathPlanner Current Y", pose.getY());
+            SmartDashboard.putNumber(
+                "PathPlanner Current Heading", pose.getRotation().getDegrees());
+          });
+
+      PathPlannerLogging.setLogTargetPoseCallback(
+          pose -> {
+            m_field.getObject("PathPlanner Target").setPose(pose);
+            SmartDashboard.putBoolean("PathPlanner Target Valid", true);
+            SmartDashboard.putNumber("PathPlanner Target X", pose.getX());
+            SmartDashboard.putNumber("PathPlanner Target Y", pose.getY());
+            SmartDashboard.putNumber(
+                "PathPlanner Target Heading", pose.getRotation().getDegrees());
+          });
+
       PathPlannerLogging.setLogActivePathCallback(
-          poses -> m_field.getObject("PathPlanner Path").setPoses(poses));
+          poses -> {
+            m_field.getObject("PathPlanner Path").setPoses(poses);
+            SmartDashboard.putString("PathPlanner Active Path", serializePath(poses));
+            SmartDashboard.putNumber("PathPlanner Path Points", poses.size());
+            if (poses.isEmpty()) {
+              SmartDashboard.putBoolean("PathPlanner Target Valid", false);
+            }
+          });
 
       SmartDashboard.putBoolean("PathPlanner Configured", true);
     } catch (Exception e) {
@@ -135,6 +170,27 @@ public class DriveSubsystem extends SubsystemBase {
     SmartDashboard.putNumber("Pose X", pose.getX());
     SmartDashboard.putNumber("Pose Y", pose.getY());
     SmartDashboard.putNumber("Pose Heading", pose.getRotation().getDegrees());
+
+    ChassisSpeeds robotSpeeds = getRobotRelativeSpeeds();
+    SmartDashboard.putNumber("Robot Velocity X", robotSpeeds.vxMetersPerSecond);
+    SmartDashboard.putNumber("Robot Velocity Y", robotSpeeds.vyMetersPerSecond);
+    SmartDashboard.putNumber(
+        "Robot Angular Velocity", Math.toDegrees(robotSpeeds.omegaRadiansPerSecond));
+    SmartDashboard.putBoolean("Autonomous Enabled", DriverStation.isAutonomousEnabled());
+  }
+
+  /** Serializes the active PathPlanner path for the custom dashboard. */
+  private static String serializePath(List<Pose2d> poses) {
+    StringJoiner joiner = new StringJoiner(";");
+    for (Pose2d pose : poses) {
+      joiner.add(String.format(
+          Locale.US,
+          "%.4f,%.4f,%.2f",
+          pose.getX(),
+          pose.getY(),
+          pose.getRotation().getDegrees()));
+    }
+    return joiner.toString();
   }
 
   /**

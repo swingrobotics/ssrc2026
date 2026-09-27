@@ -76,6 +76,7 @@ public class RobotContainer {
     }
     m_autoChooser = autoChooser;
     SmartDashboard.putData("Auto Chooser", m_autoChooser);
+    SmartDashboard.putString("Selected Auto", "None");
 
     m_robotDrive.setDefaultCommand(
         new RunCommand(
@@ -194,6 +195,14 @@ public class RobotContainer {
         .onTrue(new InstantCommand(
             () -> m_robotDrive.zeroHeading(),
             m_robotDrive));
+  }
+
+  /** Publishes dashboard-only state that is not owned by a subsystem. */
+  public void updateDashboard() {
+    Command selectedAuto = m_autoChooser.getSelected();
+    SmartDashboard.putString(
+        "Selected Auto",
+        selectedAuto != null ? selectedAuto.getName() : "None");
   }
 
   /**
