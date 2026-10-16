@@ -82,6 +82,7 @@ public final class Constants {
   public static final class OIConstants {
     public static final int kDriverControllerPort = 0;
     public static final double kDriveDeadband = 0.05;
+    public static final double kHoodDeadband = 0.10;
   }
 
   public static final class AutoConstants {
@@ -101,5 +102,29 @@ public final class Constants {
 
   public static final class NeoMotorConstants {
     public static final double kFreeSpeedRpm = 5676;
+  }
+
+  // Mechanism constants from FRC_Drive_Shooter_Merged.zip.
+  public static final class ShooterConstants {
+    public static final int SHOOTER_9_ID = 9;
+    public static final int SHOOTER_10_ID = 10;
+    public static final int SHOOTER_12_ID = 12;
+    public static final double TEST_SPEED = -0.50;
+  }
+
+  public static final class FeederConstants {
+    public static final int FEEDER_11_ID = 11;
+    public static final int FEEDER_14_ID = 14;
+    public static final double TEST_SPEED = 0.50;
+  }
+
+  public static final class HoodConstants {
+    public static final int HOOD_MOTOR_ID = 13;
+    public static final int HOOD_ENCODER_DIO = 0;
+    public static final double TEST_MAX_SPEED = 0.08;
+    // Actual values in the ZIP's Constants.java (README had outdated values).
+    public static final double MIN_POSITION = 0.2687;
+    public static final double MAX_POSITION = 0.4989;
+    public static final boolean POSITIVE_OUTPUT_INCREASES_ENCODER = false;
   }
 }
