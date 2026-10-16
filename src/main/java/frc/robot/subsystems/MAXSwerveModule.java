@@ -104,7 +104,18 @@ public class MAXSwerveModule {
     m_drivingClosedLoopController.setSetpoint(correctedDesiredState.speedMetersPerSecond, ControlType.kVelocity);
     m_turningClosedLoopController.setSetpoint(correctedDesiredState.angle.getRadians(), ControlType.kPosition);
 
-    m_desiredState = desiredState;
+    // Store the optimized setpoint in chassis-relative coordinates so telemetry
+    // shows the angle/speed the module is actually being commanded to reach.
+    m_desiredState = new SwerveModuleState(
+        correctedDesiredState.speedMetersPerSecond,
+        correctedDesiredState.angle.minus(Rotation2d.fromRadians(m_chassisAngularOffset)));
+  }
+
+  /** Returns the current optimized target state in chassis-relative coordinates. */
+  public SwerveModuleState getDesiredState() {
+    return new SwerveModuleState(
+        m_desiredState.speedMetersPerSecond,
+        m_desiredState.angle);
   }
 
   /** Zeroes all the SwerveModule encoders. */

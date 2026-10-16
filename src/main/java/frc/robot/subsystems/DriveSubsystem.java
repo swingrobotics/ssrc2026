@@ -177,6 +177,26 @@ public class DriveSubsystem extends SubsystemBase {
     SmartDashboard.putNumber(
         "Robot Angular Velocity", Math.toDegrees(robotSpeeds.omegaRadiansPerSecond));
     SmartDashboard.putBoolean("Autonomous Enabled", DriverStation.isAutonomousEnabled());
+
+    publishModuleTelemetry("FL", m_frontLeft);
+    publishModuleTelemetry("FR", m_frontRight);
+    publishModuleTelemetry("RL", m_rearLeft);
+    publishModuleTelemetry("RR", m_rearRight);
+  }
+
+  /** Publishes measured and optimized target state for one swerve module. */
+  private static void publishModuleTelemetry(String name, MAXSwerveModule module) {
+    SwerveModuleState actual = module.getState();
+    SwerveModuleState target = module.getDesiredState();
+
+    SmartDashboard.putNumber(
+        "Swerve " + name + " Actual Speed", actual.speedMetersPerSecond);
+    SmartDashboard.putNumber(
+        "Swerve " + name + " Actual Angle", actual.angle.getDegrees());
+    SmartDashboard.putNumber(
+        "Swerve " + name + " Target Speed", target.speedMetersPerSecond);
+    SmartDashboard.putNumber(
+        "Swerve " + name + " Target Angle", target.angle.getDegrees());
   }
 
   /** Serializes the active PathPlanner path for the custom dashboard. */
