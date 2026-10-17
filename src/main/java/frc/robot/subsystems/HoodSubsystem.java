@@ -9,10 +9,13 @@ import com.revrobotics.spark.config.SparkMaxConfig;
 
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.controller.PIDController;
+import edu.wpi.first.networktables.GenericEntry;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.DutyCycleEncoder;
+import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
+import java.util.Map;
 
 import frc.robot.Constants.HoodConstants;
 
@@ -32,6 +35,10 @@ public class HoodSubsystem extends SubsystemBase {
     private final PIDController holdPid = new PIDController(HOLD_KP, 0.0, 0.0);
     private double holdTarget = Double.NaN;
     private double holdOutput = 0.0;
+    private double appliedGravityAssist = 0.0;
+    // Signed percent (-8 to +8). Defaults to 0 until an adult/team
+    // validates which motor direction supports the hood against gravity.
+    private final GenericEntry gravityAssistEntry;
 
     // Constructor
     public HoodSubsystem() {
@@ -48,7 +55,14 @@ public class HoodSubsystem extends SubsystemBase {
                 PersistMode.kPersistParameters
         );
 
-        // Shuffleboard
+        // A signed, conservative gravity-feedforward adjustment.
+        // 0% is intentionally the initial value; never guess lifting direction.
+        gravityAssistEntry = Shuffleboard.getTab("Test")
+                .add("Hood Gravity Assist (%)", 0.0)
+                .withWidget(BuiltInWidgets.kNumberSlider)
+                .withProperties(Map.of("min", -8.0, "max", 8.0))
+                .getEntry();
+
         Shuffleboard.getTab("Test")
                 .addDouble("Hood Encoder", this::getEncoderPosition);
 
@@ -84,6 +98,9 @@ public class HoodSubsystem extends SubsystemBase {
                                 ? holdTarget - getEncoderPosition() : 0.0);
         Shuffleboard.getTab("Test")
                 .addDouble("Hood Hold Output", () -> holdOutput);
+        Shuffleboard.getTab("Test")
+                .addDouble("Hood Gravity Assist Applied (%)",
+                        () -> appliedGravityAssist * 100.0);
     }
 
     @Override
@@ -97,6 +114,7 @@ public class HoodSubsystem extends SubsystemBase {
     private void resetHold() {
         holdTarget = Double.NaN;
         holdOutput = 0.0;
+        appliedGravityAssist = 0.0;
         holdPid.reset();
     }
 
@@ -171,10 +189,20 @@ public class HoodSubsystem extends SubsystemBase {
         double encoderCorrection = holdPid.calculate(position, holdTarget);
         double motorCorrection = HoodConstants.POSITIVE_OUTPUT_INCREASES_ENCODER
                 ? encoderCorrection : -encoderCorrection;
-        motorCorrection = MathUtil.clamp(
-                motorCorrection, -HOLD_MAX_OUTPUT, HOLD_MAX_OUTPUT);
+        // Gravity feedforward applies supporting torque immediately, while
+        // PID corrects the remaining position error. Both outputs together
+        // stay within the existing +/-8% motor limit.
+        double assistPercent = gravityAssistEntry.getDouble(0.0);
+        if (!Double.isFinite(assistPercent)) {
+            assistPercent = 0.0;
+        }
+        appliedGravityAssist = MathUtil.clamp(
+                assistPercent / 100.0, -HOLD_MAX_OUTPUT, HOLD_MAX_OUTPUT);
+        double holdCommand = MathUtil.clamp(
+                motorCorrection + appliedGravityAssist,
+                -HOLD_MAX_OUTPUT, HOLD_MAX_OUTPUT);
 
-        runWithLimits(motorCorrection, position);
+        runWithLimits(holdCommand, position);
     }
 
     private void runWithLimits(double output, double position) {
