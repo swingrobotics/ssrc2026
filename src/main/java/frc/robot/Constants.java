@@ -114,14 +114,16 @@ public final class Constants {
     // optical axis tilted 25 deg above horizontal (requires confirmation
     // that the 25-deg reference really is the horizontal plane).
     //
-    // IMPORTANT: distance from center alone DOES NOT determine forward/left
-    // components. Confirm shooter side relative to robot +X, camera lateral
-    // offset and whether the previously reported 90-deg roll is still present.
-    // Do NOT set verified=true based only on the measurements above.
+    // Photo and user confirmation: camera is centered left/right (Y=0).
+    // Treat 317.32884884 mm as the horizontal forward offset from center,
+    // assuming the Shooter-facing side is robot +X and the distance is
+    // measured in plan view rather than as a slanted 3D diagonal.
+    // Still verify prior 90-deg camera roll and absolute pitch reference.
+    // Do NOT enable camera localization until its rotation is verified.
     public static final boolean CAMERA_MOUNT_VERIFIED = false;
     public static final double CAMERA_CENTER_DISTANCE_MEASURED_M = 0.31732884884;
-    public static final double CAMERA_FORWARD_M = 0.0; // PENDING: signed robot +X offset
-    public static final double CAMERA_LEFT_M = 0.0;    // PENDING: signed robot +Y offset
+    public static final double CAMERA_FORWARD_M = 0.31732884884; // assuming shooter side = robot +X
+    public static final double CAMERA_LEFT_M = 0.0;    // user confirmed centered in robot Y
     public static final double CAMERA_UP_M = 0.40394608582;
     public static final double CAMERA_ROLL_DEG = 0.0;  // PENDING: verify earlier 90-deg camera rotation
     // WPILib NWU convention: negative pitch points camera +X upward.

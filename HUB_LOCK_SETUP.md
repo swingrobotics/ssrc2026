@@ -32,16 +32,19 @@ angles, Shooter RPM or automatic ball trajectory calculations are included.
   **403.94608582 mm above the floor** (`CAMERA_UP_M=0.40394608582`);
   camera distance from robot center **317.32884884 mm**
   (`CAMERA_CENTER_DISTANCE_MEASURED_M=0.31732884884`). This distance
-  is NOT automatically a valid +X translation. The user reported the camera
-  on the Shooter firing side and 25 degrees up from its underside reference.
+  is now provisionally treated as the **forward (+X)** mounting offset
+  (`CAMERA_FORWARD_M=0.31732884884`), assuming the Shooter-facing end
+  is the programmed robot front (+X) and the distance was measured horizontally.
+  A mounting photo and explicit user confirmation establish that the camera
+  is left/right centered, so `CAMERA_LEFT_M=0`.
   Set `CAMERA_PITCH_DEG=-25` provisionally for a camera whose optical axis
   is actually 25 degrees above *horizontal* in the WPILib frame.
-- **Still required**: confirm whether 317.33 mm is horizontal or direct
-  distance, whether the camera is centered left-to-right, which direction
-  the shooter faces relative to robot +X, whether the former 90-degree
-  camera mounting rotation remains, and whether the angle reference is
-  horizontal. Set the corresponding `CAMERA_FORWARD_M`,
-  `CAMERA_LEFT_M`, `CAMERA_ROLL_DEG`, and `CAMERA_YAW_DEG` accurately.
+- **Still required**: verify the earlier 90-degree camera mounting rotation
+  and whether it is clockwise or counterclockwise when viewed from the
+  camera's rear looking forward. Verify that 25 degrees is measured above
+  horizontal, and that the Shooter-facing side is robot +X.
+  Set `CAMERA_ROLL_DEG` and `CAMERA_YAW_DEG` as appropriate before
+  marking the camera mount verified.
   These are intentionally pending, and the safety switch remains false.
 - PhotonVision needs camera intrinsics calibration for the selected resolution
   and the **correct physical AprilTag size**; otherwise 3D distance can be
