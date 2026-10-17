@@ -111,24 +111,26 @@ public final class Constants {
     // Recorded from the team's measurements on 2026-10-17:
     // camera lens height = 403.94608582 mm above the floor,
     // camera distance = 317.32884884 mm from robot center,
-    // optical axis tilted 25 deg above horizontal (requires confirmation
-    // that the 25-deg reference really is the horizontal plane).
+    // optical axis 25 deg ABOVE HORIZONTAL (user confirmed).
     //
     // Photo and user confirmation: camera is centered left/right (Y=0).
     // Treat 317.32884884 mm as the horizontal forward offset from center,
     // assuming the Shooter-facing side is robot +X and the distance is
     // measured in plan view rather than as a slanted 3D diagonal.
-    // Still verify prior 90-deg camera roll and absolute pitch reference.
-    // Do NOT enable camera localization until its rotation is verified.
-    public static final boolean CAMERA_MOUNT_VERIFIED = false;
+    // Camera image was rotated upright in PhotonVision, and target Y
+    // increases when the tag moves left, decreases when it moves right.
+    // PHASE-1 TEST ONLY: enable pose measurements using these provisional
+    // mount settings. Check full 3D transform + heading with robot stationary
+    // BEFORE permitting an X-button rotation. If inconsistent, revert false.
+    public static final boolean CAMERA_MOUNT_VERIFIED = true;
     public static final double CAMERA_CENTER_DISTANCE_MEASURED_M = 0.31732884884;
     public static final double CAMERA_FORWARD_M = 0.31732884884; // assuming shooter side = robot +X
     public static final double CAMERA_LEFT_M = 0.0;    // user confirmed centered in robot Y
     public static final double CAMERA_UP_M = 0.40394608582;
-    public static final double CAMERA_ROLL_DEG = 0.0;  // PENDING: verify earlier 90-deg camera rotation
+    public static final double CAMERA_ROLL_DEG = 0.0;  // PhotonVision image orientation corrected; validate 3D pose
     // WPILib NWU convention: negative pitch points camera +X upward.
     public static final double CAMERA_PITCH_DEG = -25.0;
-    public static final double CAMERA_YAW_DEG = 0.0;   // PENDING: verify camera faces robot +X
+    public static final double CAMERA_YAW_DEG = 0.0;   // assumes optical axis faces robot +X (shooter direction)
 
     public static final double BUMP_ENTRY_TILT_DEG = 9.0;
     public static final double BUMP_EXIT_TILT_DEG = 5.0;

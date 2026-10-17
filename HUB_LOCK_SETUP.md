@@ -37,20 +37,30 @@ angles, Shooter RPM or automatic ball trajectory calculations are included.
   is the programmed robot front (+X) and the distance was measured horizontally.
   A mounting photo and explicit user confirmation establish that the camera
   is left/right centered, so `CAMERA_LEFT_M=0`.
-  Set `CAMERA_PITCH_DEG=-25` provisionally for a camera whose optical axis
-  is actually 25 degrees above *horizontal* in the WPILib frame.
-- **Still required**: verify the earlier 90-degree camera mounting rotation
-  and whether it is clockwise or counterclockwise when viewed from the
-  camera's rear looking forward. Verify that 25 degrees is measured above
-  horizontal, and that the Shooter-facing side is robot +X.
-  Set `CAMERA_ROLL_DEG` and `CAMERA_YAW_DEG` as appropriate before
-  marking the camera mount verified.
-  These are intentionally pending, and the safety switch remains false.
+  The user CONFIRMED the optical axis is 25 degrees ABOVE HORIZONTAL;
+  in WPILib's NWU convention `CAMERA_PITCH_DEG=-25`.
+  PhotonVision already displays the camera image upright and its reported
+  target Y increases when the tag moves left, decreasing when moved right.
+- **Phase-1 test enabled**: `CAMERA_MOUNT_VERIFIED = true`, while keeping
+  `CAMERA_ROLL_DEG=0` and `CAMERA_YAW_DEG=0` to avoid double-rotating the
+  software-corrected image. These values are a working assumption, NOT an
+  independent proof of the 3D camera mount transform. Before driving, check
+  that a fixed stationary tag produces consistent saved X/Y as the robot
+  moves and that the target heading sign is correct. The Shooter-facing side
+  must be robot +X, and 317.33 mm must be a horizontal center offset.
+  If either assumption is wrong, set `CAMERA_MOUNT_VERIFIED = false` until
+  the corrected values have been entered.
 - PhotonVision needs camera intrinsics calibration for the selected resolution
   and the **correct physical AprilTag size**; otherwise 3D distance can be
   wrong. Use a stable, stationary tag secured above the floor.
-- ONLY AFTER the above, set `CAMERA_MOUNT_VERIFIED = true`. The shipped
-  value is intentionally **false** to avoid operating with false geometry.
+- The switch is currently **true** only for stationary pose verification
+  and supervised low-speed tests. Do not treat it as full 3D calibration
+  certification. Watch `Tag Remembered`, `Tag Memory X/Y`, and
+  `Tag Heading Error Deg` before allowing any automatic turn.
+- The observed screenshot showed `Ambiguity Ratio = 0.44`, while the
+  single-tag filter accepts only values below 0.18. That frame will be
+  REJECTED. Stabilize the tag, improve viewing angle/lighting and verify
+  AprilTag pose ambiguity falls below 0.18; do not simply bypass the filter.
 - Confirm `PC_Camera` network identity and PhotonLib 2026 API version.
 - Robot starting point is *arbitrary*. Its starting local frame is defined
   by odometry and navX2, not the official field; relative position matters.
