@@ -11,7 +11,6 @@ import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import java.util.Map;
-import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
@@ -28,7 +27,6 @@ import frc.robot.subsystems.DriveSubsystem;
 import frc.robot.subsystems.FeederSubsystem;
 import frc.robot.subsystems.HoodSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
-import org.photonvision.PhotonCamera;
 
 /*
  * This class is where the bulk of the robot should be declared. Since Command-based is a
@@ -57,26 +55,13 @@ public class RobotContainer {
   // PathPlanner autonomous chooser.
   private final SendableChooser<Command> m_autoChooser;
 
-  // PhotonVision camera nickname. Must exactly match the nickname in the PhotonVision UI.
-  private static final String kPhotonCameraName = "PC_Camera";
-  private final PhotonCamera m_photonCamera = new PhotonCamera(kPhotonCameraName);
-
-  // PhotonVision's official aiming example uses target yaw with a proportional gain.
-  // DriveSubsystem.drive() accepts a normalized rotation command and scales it by max angular speed.
-  private static final double kVisionTurnKp = 0.01;
-
-  // Keep the last valid target briefly between camera frames so the robot command does not
-  // alternate between turning and zero when the robot loop runs faster than the camera FPS.
-  private static final double kVisionTargetHoldSeconds = 0.20;
+  private final HubVision m_hubVision = new HubVision();
 
   // Driving mode. False keeps robot-relative translation by default.
   private boolean m_fieldRelativeEnabled = false;
 
-  // Vision auto-align state.
+  // X toggles HUB LOCK, not naive best-tag yaw tracking.
   private boolean m_visionAlignEnabled = false;
-  private boolean m_visionTargetVisible = false;
-  private double m_visionTargetYawDegrees = 0.0;
-  private double m_lastVisionTargetTimestamp = -1.0;
 
   /**
    * The container for the robot. Contains subsystems, OI devices, and commands.
@@ -156,65 +141,13 @@ public class RobotContainer {
     return leftRotation - rightRotation;
   }
 
-  /**
-   * Reads the newest PhotonVision result using the same pattern as PhotonVision's official
-   * "Aiming at a Target" example: getAllUnreadResults(), use the newest result, then read yaw.
-   * If there is no new camera frame, keep the most recent valid yaw for a short time instead of
-   * immediately commanding zero rotation.
-   */
-  private void updateVisionTarget() {
-    var results = m_photonCamera.getAllUnreadResults();
-    if (!results.isEmpty()) {
-      // Camera processed at least one new frame since the last call. Use the newest frame.
-      var result = results.get(results.size() - 1);
-
-      if (result.hasTargets()) {
-        // For this first version, aim at PhotonVision's best visible AprilTag.
-        var target = result.getBestTarget();
-        if (target != null && target.getFiducialId() >= 0) {
-          m_visionTargetYawDegrees = target.getYaw();
-          m_lastVisionTargetTimestamp = Timer.getFPGATimestamp();
-        }
-      }
-    }
-
-    // The robot loop can run faster than PhotonVision produces frames. Keep using the most recent
-    // valid target between frames, and only stop after the target has actually been gone long enough.
-    m_visionTargetVisible = m_lastVisionTargetTimestamp >= 0.0
-        && (Timer.getFPGATimestamp() - m_lastVisionTargetTimestamp) <= kVisionTargetHoldSeconds;
-
-    if (!m_visionTargetVisible) {
-      m_visionTargetYawDegrees = 0.0;
-    }
-
-    SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
-    SmartDashboard.putBoolean("Vision Target Visible", m_visionTargetVisible);
-    SmartDashboard.putNumber("Vision Target Yaw", m_visionTargetYawDegrees);
-  }
-
-  /**
-   * Returns manual trigger rotation when auto-align is off. When auto-align is on and an
-   * AprilTag is visible, it overrides manual rotation with PhotonVision yaw-based aiming.
-   */
+  /** Manual trigger rotation takes priority; HUB LOCK calculates field target heading. */
   private double getDriveRotationCommand() {
-    updateVisionTarget();
-
+    double manual = getTriggerRotation();
     if (!m_visionAlignEnabled) {
-      return getTriggerRotation();
+      return manual;
     }
-
-    if (!m_visionTargetVisible) {
-      // Auto-align is enabled but the target has been gone longer than the hold window.
-      return 0.0;
-    }
-
-    // PhotonVision official example:
-    // turn = -1.0 * targetYaw * VISION_TURN_kP * maxAngularSpeed
-    // Our DriveSubsystem applies maxAngularSpeed internally, so return the normalized part here.
-    return MathUtil.clamp(
-        -1.0 * m_visionTargetYawDegrees * kVisionTurnKp,
-        -1.0,
-        1.0);
+    return m_hubVision.calculateRotation(m_robotDrive, manual);
   }
 
   /** Toggle between robot-relative and field-relative translation control. */
@@ -226,6 +159,7 @@ public class RobotContainer {
   /** Toggle PhotonVision AprilTag auto-alignment on/off. */
   private void toggleVisionAlign() {
     m_visionAlignEnabled = !m_visionAlignEnabled;
+    m_hubVision.resetHeadingController();
     SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
   }
 
@@ -268,6 +202,10 @@ public class RobotContainer {
 
   /** Publishes dashboard-only state that is not owned by a subsystem. */
   public void updateDashboard() {
+    // Run even during autonomous and disabled: only one consumer of camera frames.
+    m_hubVision.update(m_robotDrive);
+    SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
+    SmartDashboard.putBoolean("Hub Lock Enabled", m_visionAlignEnabled);
     Command selectedAuto = m_autoChooser.getSelected();
     SmartDashboard.putString(
         "Selected Auto",

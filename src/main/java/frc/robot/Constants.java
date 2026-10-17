@@ -104,6 +104,33 @@ public final class Constants {
     public static final double kFreeSpeedRpm = 5676;
   }
 
+  /** HUB localization calibration. Do not enable before measuring the camera installation. */
+  public static final class VisionConstants {
+    public static final String CAMERA_NAME = "PC_Camera";
+
+    // The 2026 field has welded and AndyMark variants. Match the actual event field
+    // in both this code and PhotonVision's Settings > AprilTag Field Layout.
+    public static final edu.wpi.first.apriltag.AprilTagFields FIELD =
+        edu.wpi.first.apriltag.AprilTagFields.k2026RebuiltWelded;
+
+    // Official 2026 rulebook: HUB center is 158.6 in from its alliance wall.
+    public static final double HUB_FROM_ALLIANCE_WALL_M = Units.inchesToMeters(158.6);
+
+    // MUST set true only after measuring translation + angle and camera calibration.
+    // Disabled by default so placeholder camera geometry cannot corrupt field pose.
+    public static final boolean CAMERA_MOUNT_VERIFIED = false;
+    public static final double CAMERA_FORWARD_M = 0.0; // Robot center -> camera forward, +X
+    public static final double CAMERA_LEFT_M = 0.0;    // Robot center -> camera left, +Y
+    public static final double CAMERA_UP_M = 0.0;      // Robot center -> camera up, +Z
+    public static final double CAMERA_ROLL_DEG = 0.0;  // Rotated camera may require ~90 deg
+    public static final double CAMERA_PITCH_DEG = 0.0;
+    public static final double CAMERA_YAW_DEG = 0.0;
+
+    public static final double BUMP_ENTRY_TILT_DEG = 9.0;
+    public static final double BUMP_EXIT_TILT_DEG = 5.0;
+    public static final double BUMP_SETTLE_SECONDS = 0.50;
+  }
+
   // Mechanism constants from FRC_Drive_Shooter_Merged.zip.
   public static final class ShooterConstants {
     public static final int SHOOTER_9_ID = 9;

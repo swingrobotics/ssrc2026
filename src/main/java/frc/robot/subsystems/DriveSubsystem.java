@@ -13,11 +13,12 @@ import com.studica.frc.AHRS;
 import edu.wpi.first.hal.FRCNetComm.tInstances;
 import edu.wpi.first.hal.FRCNetComm.tResourceType;
 import edu.wpi.first.hal.HAL;
+import edu.wpi.first.math.VecBuilder;
+import edu.wpi.first.math.estimator.SwerveDrivePoseEstimator;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.kinematics.SwerveDriveKinematics;
-import edu.wpi.first.math.kinematics.SwerveDriveOdometry;
 import edu.wpi.first.math.kinematics.SwerveModulePosition;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
 import edu.wpi.first.wpilibj.DriverStation;
@@ -25,6 +26,7 @@ import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.DriveConstants;
+import frc.robot.Constants.VisionConstants;
 import java.util.List;
 import java.util.Locale;
 import java.util.StringJoiner;
@@ -57,16 +59,19 @@ public class DriveSubsystem extends SubsystemBase {
   // Field visualization for odometry testing.
   private final Field2d m_field = new Field2d();
 
-  // Odometry class for tracking robot pose.
-  SwerveDriveOdometry m_odometry = new SwerveDriveOdometry(
+  // Pose estimator continuously integrates navX2 + swerve encoders and accepts
+  // delayed PhotonVision field measurements. PathPlanner uses the same pose.
+  private final SwerveDrivePoseEstimator m_poseEstimator = new SwerveDrivePoseEstimator(
       DriveConstants.kDriveKinematics,
       getGyroRotation(),
-      new SwerveModulePosition[] {
-          m_frontLeft.getPosition(),
-          m_frontRight.getPosition(),
-          m_rearLeft.getPosition(),
-          m_rearRight.getPosition()
-      });
+      getModulePositions(),
+      new Pose2d());
+
+  // (0,0) is an uninitialized placeholder, not a real field starting location.
+  private boolean m_poseInitialized = false;
+  private boolean m_bumpActive = false;
+  private boolean m_bumpRecoveryRequired = false;
+  private double m_bumpSettledSince = -1.0;
 
   /** Creates a new DriveSubsystem. */
   public DriveSubsystem() {
@@ -142,14 +147,8 @@ public class DriveSubsystem extends SubsystemBase {
 
   @Override
   public void periodic() {
-    m_odometry.update(
-        getGyroRotation(),
-        new SwerveModulePosition[] {
-            m_frontLeft.getPosition(),
-            m_frontRight.getPosition(),
-            m_rearLeft.getPosition(),
-            m_rearRight.getPosition()
-        });
+    m_poseEstimator.update(getGyroRotation(), getModulePositions());
+    updateBumpDetection();
 
     // navX2 status/orientation values.
     SmartDashboard.putBoolean("NavX Connected", m_gyro.isConnected());
@@ -170,6 +169,9 @@ public class DriveSubsystem extends SubsystemBase {
     SmartDashboard.putNumber("Pose X", pose.getX());
     SmartDashboard.putNumber("Pose Y", pose.getY());
     SmartDashboard.putNumber("Pose Heading", pose.getRotation().getDegrees());
+    SmartDashboard.putBoolean("Pose Initialized", m_poseInitialized);
+    SmartDashboard.putBoolean("Bump Active", m_bumpActive);
+    SmartDashboard.putBoolean("Bump Recovery Required", m_bumpRecoveryRequired);
 
     ChassisSpeeds robotSpeeds = getRobotRelativeSpeeds();
     SmartDashboard.putNumber("Robot Velocity X", robotSpeeds.vxMetersPerSecond);
@@ -226,24 +228,81 @@ public class DriveSubsystem extends SubsystemBase {
    * @return The pose.
    */
   public Pose2d getPose() {
-    return m_odometry.getPoseMeters();
+    return m_poseEstimator.getEstimatedPosition();
   }
 
-  /**
-   * Resets the odometry to the specified pose.
-   *
-   * @param pose The pose to which to set the odometry.
-   */
+  private SwerveModulePosition[] getModulePositions() {
+    return new SwerveModulePosition[] {
+        m_frontLeft.getPosition(),
+        m_frontRight.getPosition(),
+        m_rearLeft.getPosition(),
+        m_rearRight.getPosition()
+    };
+  }
+
+  /** Called by PathPlanner on auto start, or after consistently verified vision recovery. */
   public void resetOdometry(Pose2d pose) {
-    m_odometry.resetPosition(
-        getGyroRotation(),
-        new SwerveModulePosition[] {
-            m_frontLeft.getPosition(),
-            m_frontRight.getPosition(),
-            m_rearLeft.getPosition(),
-            m_rearRight.getPosition()
-        },
-        pose);
+    m_poseEstimator.resetPosition(getGyroRotation(), getModulePositions(), pose);
+    m_poseInitialized = true;
+    m_bumpRecoveryRequired = false;
+  }
+
+  public void addVisionPose(Pose2d pose, double timestampSeconds, boolean multiTag) {
+    m_poseEstimator.addVisionMeasurement(
+        pose,
+        timestampSeconds,
+        multiTag ? VecBuilder.fill(0.20, 0.20, 0.35)
+            : VecBuilder.fill(0.65, 0.65, 0.80));
+    m_poseInitialized = true;
+    if (!m_bumpActive) {
+      m_bumpRecoveryRequired = false;
+    }
+  }
+
+  public boolean isPoseInitialized() {
+    return m_poseInitialized;
+  }
+
+  public boolean isBumpActive() {
+    return m_bumpActive;
+  }
+
+  public boolean needsBumpRecovery() {
+    return m_bumpRecoveryRequired;
+  }
+
+  public boolean isGyroReady() {
+    return m_gyro.isConnected() && !m_gyro.isCalibrating();
+  }
+
+  /** Mark bump crossing using navX2 tilt with hysteresis to avoid noisy toggling. */
+  private void updateBumpDetection() {
+    double pitch = m_gyro.getPitch();
+    double roll = m_gyro.getRoll();
+    if (!Double.isFinite(pitch) || !Double.isFinite(roll) || !isGyroReady()) {
+      m_bumpRecoveryRequired = true;
+      return;
+    }
+    double tilt = Math.max(Math.abs(pitch), Math.abs(roll));
+    if (tilt >= VisionConstants.BUMP_ENTRY_TILT_DEG) {
+      m_bumpActive = true;
+      m_bumpRecoveryRequired = true;
+      m_bumpSettledSince = -1.0;
+      return;
+    }
+    if (!m_bumpActive) {
+      return;
+    }
+    if (tilt > VisionConstants.BUMP_EXIT_TILT_DEG) {
+      m_bumpSettledSince = -1.0;
+      return;
+    }
+    double now = edu.wpi.first.wpilibj.Timer.getFPGATimestamp();
+    if (m_bumpSettledSince < 0.0) {
+      m_bumpSettledSince = now;
+    } else if (now - m_bumpSettledSince >= VisionConstants.BUMP_SETTLE_SECONDS) {
+      m_bumpActive = false;
+    }
   }
 
   /**
@@ -266,7 +325,7 @@ public class DriveSubsystem extends SubsystemBase {
                 xSpeedDelivered,
                 ySpeedDelivered,
                 rotDelivered,
-                getGyroRotation())
+                getPose().getRotation())
             : new ChassisSpeeds(xSpeedDelivered, ySpeedDelivered, rotDelivered));
 
     SwerveDriveKinematics.desaturateWheelSpeeds(
@@ -329,9 +388,13 @@ public class DriveSubsystem extends SubsystemBase {
     m_rearRight.resetEncoders();
   }
 
-  /** Zeroes the navX2 yaw/heading. */
+  /** Do not reset navX2's raw heading after localization; preserve the field frame. */
   public void zeroHeading() {
     m_gyro.reset();
+    // WPILib's estimator keeps its current pose through a gyro offset update.
+    // A verified field pose must still be re-established before HUB LOCK is trusted.
+    m_poseInitialized = false;
+    m_bumpRecoveryRequired = false;
   }
 
   /**
