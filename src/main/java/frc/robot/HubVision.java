@@ -30,7 +30,10 @@ import org.photonvision.targeting.PhotonTrackedTarget;
  */
 public class HubVision {
   private static final double FRAME_MAX_AGE_S = 0.60;
-  private static final double SINGLE_TAG_MAX_AMBIGUITY = 0.18;
+  // Allow noisier single-tag frames only for initial acquisition; do not use
+  // them to rewrite the robot pose after the position has been remembered.
+  private static final double ACQUISITION_MAX_AMBIGUITY = 0.50;
+  private static final double CORRECTION_MAX_AMBIGUITY = 0.25;
   private static final double TAG_MIN_DISTANCE_M = 0.30;
   private static final double TAG_MAX_DISTANCE_M = 6.00;
   private static final double LOCK_MAX_ANGULAR_OUTPUT = 0.35;
@@ -38,7 +41,7 @@ public class HubVision {
 
   // Initial world-coordinate tag observations must agree before storing target.
   private static final int INITIAL_OBSERVATIONS = 3;
-  private static final double INITIAL_POSITION_TOLERANCE_M = 0.18;
+  private static final double INITIAL_POSITION_TOLERANCE_M = 0.30;
 
   // After BUMP or suspicious odometry drift, compare VISION-ODOMETRY offsets
   // across separate frames, rather than comparing moving robot positions.
@@ -147,7 +150,7 @@ public class HubVision {
         if (rememberedTagId >= 0 && tag.getFiducialId() != rememberedTagId) {
           continue;
         }
-        if (!validTag(tag)) {
+        if (!validTag(tag, rememberedTagWorld == null)) {
           continue;
         }
 
@@ -200,10 +203,12 @@ public class HubVision {
     lastVisibleTagCount = count;
   }
 
-  private boolean validTag(PhotonTrackedTarget tag) {
+  private boolean validTag(PhotonTrackedTarget tag, boolean initialAcquisition) {
     double ambiguity = tag.getPoseAmbiguity();
+    double maxAmbiguity = initialAcquisition
+        ? ACQUISITION_MAX_AMBIGUITY : CORRECTION_MAX_AMBIGUITY;
     if (tag.getFiducialId() <= 0 || !Double.isFinite(ambiguity)
-        || ambiguity < 0.0 || ambiguity > SINGLE_TAG_MAX_AMBIGUITY) {
+        || ambiguity < 0.0 || ambiguity > maxAmbiguity) {
       return false;
     }
     Transform3d transform = tag.getBestCameraToTarget();
