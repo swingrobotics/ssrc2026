@@ -28,11 +28,21 @@ angles, Shooter RPM or automatic ball trajectory calculations are included.
    a PathPlanner pose-frame reset, also clears the remembered tag.
 
 ## REQUIRED calibration before testing
-- In `Constants.VisionConstants`, measure the camera mount from the
-  **swerve robot center** and set `CAMERA_FORWARD_M`, `CAMERA_LEFT_M`,
-  `CAMERA_UP_M` in meters, and the camera's roll/pitch/yaw in degrees.
-  Confirm the camera's reported 90-degree rotation on its actual physical
-  mounting axis. The placeholder all-zero values are NOT calibrated.
+- Measurements recorded on 2026-10-17: camera height
+  **403.94608582 mm above the floor** (`CAMERA_UP_M=0.40394608582`);
+  camera distance from robot center **317.32884884 mm**
+  (`CAMERA_CENTER_DISTANCE_MEASURED_M=0.31732884884`). This distance
+  is NOT automatically a valid +X translation. The user reported the camera
+  on the Shooter firing side and 25 degrees up from its underside reference.
+  Set `CAMERA_PITCH_DEG=-25` provisionally for a camera whose optical axis
+  is actually 25 degrees above *horizontal* in the WPILib frame.
+- **Still required**: confirm whether 317.33 mm is horizontal or direct
+  distance, whether the camera is centered left-to-right, which direction
+  the shooter faces relative to robot +X, whether the former 90-degree
+  camera mounting rotation remains, and whether the angle reference is
+  horizontal. Set the corresponding `CAMERA_FORWARD_M`,
+  `CAMERA_LEFT_M`, `CAMERA_ROLL_DEG`, and `CAMERA_YAW_DEG` accurately.
+  These are intentionally pending, and the safety switch remains false.
 - PhotonVision needs camera intrinsics calibration for the selected resolution
   and the **correct physical AprilTag size**; otherwise 3D distance can be
   wrong. Use a stable, stationary tag secured above the floor.

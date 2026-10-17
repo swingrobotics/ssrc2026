@@ -108,15 +108,25 @@ public final class Constants {
   public static final class VisionConstants {
     public static final String CAMERA_NAME = "PC_Camera";
 
-    // MUST set true only after measuring translation + angle and camera calibration.
-    // Disabled by default so placeholder camera geometry cannot corrupt field pose.
+    // Recorded from the team's measurements on 2026-10-17:
+    // camera lens height = 403.94608582 mm above the floor,
+    // camera distance = 317.32884884 mm from robot center,
+    // optical axis tilted 25 deg above horizontal (requires confirmation
+    // that the 25-deg reference really is the horizontal plane).
+    //
+    // IMPORTANT: distance from center alone DOES NOT determine forward/left
+    // components. Confirm shooter side relative to robot +X, camera lateral
+    // offset and whether the previously reported 90-deg roll is still present.
+    // Do NOT set verified=true based only on the measurements above.
     public static final boolean CAMERA_MOUNT_VERIFIED = false;
-    public static final double CAMERA_FORWARD_M = 0.0; // Robot center -> camera forward, +X
-    public static final double CAMERA_LEFT_M = 0.0;    // Robot center -> camera left, +Y
-    public static final double CAMERA_UP_M = 0.0;      // Robot center -> camera up, +Z
-    public static final double CAMERA_ROLL_DEG = 0.0;  // Rotated camera may require ~90 deg
-    public static final double CAMERA_PITCH_DEG = 0.0;
-    public static final double CAMERA_YAW_DEG = 0.0;
+    public static final double CAMERA_CENTER_DISTANCE_MEASURED_M = 0.31732884884;
+    public static final double CAMERA_FORWARD_M = 0.0; // PENDING: signed robot +X offset
+    public static final double CAMERA_LEFT_M = 0.0;    // PENDING: signed robot +Y offset
+    public static final double CAMERA_UP_M = 0.40394608582;
+    public static final double CAMERA_ROLL_DEG = 0.0;  // PENDING: verify earlier 90-deg camera rotation
+    // WPILib NWU convention: negative pitch points camera +X upward.
+    public static final double CAMERA_PITCH_DEG = -25.0;
+    public static final double CAMERA_YAW_DEG = 0.0;   // PENDING: verify camera faces robot +X
 
     public static final double BUMP_ENTRY_TILT_DEG = 9.0;
     public static final double BUMP_EXIT_TILT_DEG = 5.0;
