@@ -104,17 +104,9 @@ public final class Constants {
     public static final double kFreeSpeedRpm = 5676;
   }
 
-  /** HUB localization calibration. Do not enable before measuring the camera installation. */
+  /** Phase-1 free-standing AprilTag calibration; full 2026 HUB targeting comes later. */
   public static final class VisionConstants {
     public static final String CAMERA_NAME = "PC_Camera";
-
-    // The 2026 field has welded and AndyMark variants. Match the actual event field
-    // in both this code and PhotonVision's Settings > AprilTag Field Layout.
-    public static final edu.wpi.first.apriltag.AprilTagFields FIELD =
-        edu.wpi.first.apriltag.AprilTagFields.k2026RebuiltWelded;
-
-    // Official 2026 rulebook: HUB center is 158.6 in from its alliance wall.
-    public static final double HUB_FROM_ALLIANCE_WALL_M = Units.inchesToMeters(158.6);
 
     // MUST set true only after measuring translation + angle and camera calibration.
     // Disabled by default so placeholder camera geometry cannot corrupt field pose.

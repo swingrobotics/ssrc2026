@@ -60,7 +60,7 @@ public class RobotContainer {
   // Driving mode. False keeps robot-relative translation by default.
   private boolean m_fieldRelativeEnabled = false;
 
-  // X toggles HUB LOCK, not naive best-tag yaw tracking.
+  // Phase 1 test: X toggles pointing at the ONE remembered elevated AprilTag.
   private boolean m_visionAlignEnabled = false;
 
   /**
@@ -141,7 +141,7 @@ public class RobotContainer {
     return leftRotation - rightRotation;
   }
 
-  /** Manual trigger rotation takes priority; HUB LOCK calculates field target heading. */
+  /** Manual trigger rotation takes priority; phase-1 tag memory calculates heading. */
   private double getDriveRotationCommand() {
     double manual = getTriggerRotation();
     if (!m_visionAlignEnabled) {
@@ -156,7 +156,7 @@ public class RobotContainer {
     SmartDashboard.putBoolean("Field Relative Enabled", m_fieldRelativeEnabled);
   }
 
-  /** Toggle PhotonVision AprilTag auto-alignment on/off. */
+  /** Toggle heading toward the remembered target, including when it is out of view. */
   private void toggleVisionAlign() {
     m_visionAlignEnabled = !m_visionAlignEnabled;
     m_hubVision.resetHeadingController();
@@ -196,7 +196,11 @@ public class RobotContainer {
 
     new JoystickButton(m_driverController, XboxController.Button.kStart.value)
         .onTrue(new InstantCommand(
-            () -> m_robotDrive.zeroHeading(),
+            () -> {
+              m_robotDrive.zeroHeading();
+              m_hubVision.clearMemory();
+              m_visionAlignEnabled = false;
+            },
             m_robotDrive));
   }
 
@@ -205,7 +209,7 @@ public class RobotContainer {
     // Run even during autonomous and disabled: only one consumer of camera frames.
     m_hubVision.update(m_robotDrive);
     SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
-    SmartDashboard.putBoolean("Hub Lock Enabled", m_visionAlignEnabled);
+    SmartDashboard.putBoolean("Tag Lock Enabled", m_visionAlignEnabled);
     Command selectedAuto = m_autoChooser.getSelected();
     SmartDashboard.putString(
         "Selected Auto",

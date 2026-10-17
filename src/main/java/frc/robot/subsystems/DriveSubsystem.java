@@ -69,6 +69,8 @@ public class DriveSubsystem extends SubsystemBase {
 
   // (0,0) is an uninitialized placeholder, not a real field starting location.
   private boolean m_poseInitialized = false;
+  // A reset from PathPlanner or navX changes the local coordinate reference.
+  private long m_poseFrameRevision = 0;
   private boolean m_bumpActive = false;
   private boolean m_bumpRecoveryRequired = false;
   private double m_bumpSettledSince = -1.0;
@@ -240,8 +242,33 @@ public class DriveSubsystem extends SubsystemBase {
     };
   }
 
-  /** Called by PathPlanner on auto start, or after consistently verified vision recovery. */
+  /** Called from PathPlanner. A new field frame invalidates remembered test targets. */
   public void resetOdometry(Pose2d pose) {
+    m_poseEstimator.resetPosition(getGyroRotation(), getModulePositions(), pose);
+    m_poseInitialized = true;
+    m_bumpRecoveryRequired = false;
+    m_poseFrameRevision++;
+  }
+
+  /** Local test frame is usable without a known official FRC field starting pose. */
+  public void enableLocalPoseFrame() {
+    m_poseInitialized = true;
+  }
+
+  public long getPoseFrameRevision() {
+    return m_poseFrameRevision;
+  }
+
+  /** Pose at PhotonVision frame capture time, including estimator latency history. */
+  public java.util.Optional<Pose2d> getPoseAt(double timestampSeconds) {
+    return m_poseEstimator.sampleAt(timestampSeconds);
+  }
+
+  /**
+   * Re-localize the SAME local coordinate frame from repeated matching-tag observations.
+   * Does not increment the frame revision: remembered tag position remains valid.
+   */
+  public void relocalizeFromRememberedTag(Pose2d pose) {
     m_poseEstimator.resetPosition(getGyroRotation(), getModulePositions(), pose);
     m_poseInitialized = true;
     m_bumpRecoveryRequired = false;
@@ -395,6 +422,7 @@ public class DriveSubsystem extends SubsystemBase {
     // A verified field pose must still be re-established before HUB LOCK is trusted.
     m_poseInitialized = false;
     m_bumpRecoveryRequired = false;
+    m_poseFrameRevision++;
   }
 
   /**

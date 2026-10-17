@@ -1,65 +1,79 @@
-# HUB LOCK development (2026 REBUILT)
+# Phase 1: Single AprilTag memory + automatic heading (TEST ONLY)
 
-This branch is based on `shooter-integration` and preserves the user's
-A=Feeder, B=Shooter, X=HUB LOCK toggle, Y=Field/Robot-relative toggle,
-right-stick-Y=manual Hood, RB=X-lock, LT/RT=manual rotation controls.
+This development branch changes the active HUB LOCK test into remembering an
+**arbitrary fixed AprilTag mounted above the floor**. The real 2026 HUB
+center, alliance selection, field-layout lookup and multi-tag fusion are
+**deferred to the later field implementation**. No Hood geometry, Hood
+angles, Shooter RPM or automatic ball trajectory calculations are included.
 
-## Implementation
-- navX2 and swerve encoders feed a single `SwerveDrivePoseEstimator`;
-  PathPlanner receives that same field pose and its existing AutoBuilder
-  reset callback is preserved.
-- PhotonVision `PC_Camera` supplies ONE stream of unread results per robot
-  tick. Coprocessor MultiTag is preferred; if unavailable, lowest ambiguity
-  SingleTag is accepted after quality checks.
-- Target position is the **alliance's HUB center**, fixed in the BLUE-origin
-  WPILib field coordinate frame. 2026 manual: 158.6 inches from the alliance
-  wall; Y is half the field width. Tag switching doesn't change target.
-- X enables HUB LOCK: PID turns to the target while the left stick still
-  drives translation. LT/RT manual rotation overrides the controller.
-- BUMP detection from navX2 Pitch/Roll pauses auto-heading and requires a
-  consistent valid post-BUMP camera pose to resume. Large vision position
-  jumps must agree across multiple frames before estimator reset.
-- Telemetry: `Pose Initialized`, `Bump Active`, `Bump Recovery Required`,
-  `Hub Lock Ready`, `Hub Localization Status`, `Hub Distance M`,
-  `Hub Target Heading`, `Hub Heading Error`, `Vision Tag Count`,
-  `Vision Pose Age Sec`. All existing dashboard topics stay available.
-- Hub distance is **telemetry only** for eventual Auto Hood calibration;
-  no untested automatic Hood encoder angles are commanded.
+## How it works
+1. Start with the robot stationary, navX2 ready and a calibrated PhotonVision
+   `PC_Camera` AprilTag pipeline. No official field starting pose is required.
+2. From three consistent, low-ambiguity observations of one tag ID,
+   calculate `robot -> camera -> AprilTag` in 3D, transform into the robot's
+   **local X/Y odometry frame**, then remember both that tag ID and location.
+3. Move around. Press **X** once to turn toward the stored X/Y location; the
+   tag may be entirely off camera. X again disables tracking; LT/RT manually
+   override rotation. Translation remains under the driver's left stick.
+4. When the remembered tag reappears, calculate a fresh robot X/Y position
+   relative to the unchanged saved tag position. Use latency-compensated
+   `SwerveDrivePoseEstimator` measurement for small errors. Require three
+   matching position corrections before large slip/BUMP recovery.
+5. During a BUMP (navX2 Pitch/Roll threshold) and until reliable recovery,
+   heading lock stops rather than turning toward an untrustworthy target.
+6. **Other AprilTag IDs are ignored** after first successful capture, even if
+   PhotonVision reports one of them as its best target.
+7. SmartDashboard `Tag Clear Memory` = true drops the saved target, permitting
+   a different tag to be learned. Pressing controller Start to zero navX2, or
+   a PathPlanner pose-frame reset, also clears the remembered tag.
 
-## REQUIRED before robot testing
-1. Edit `Constants.VisionConstants`. Measure camera center displacement
-   (forward/left/up in meters) and orientation (roll/pitch/yaw in degrees)
-   **from robot center**. The existing camera was reportedly mounted
-   rotated by 90 degrees; do not guess the proper roll/yaw axis.
-2. Choose `k2026RebuiltWelded` or `k2026RebuiltAndymark` to match the field.
-   PhotonVision Settings must use the **same** layout.
-3. Calibrate the camera lens, enable AprilTag 3D pipeline and **Do Multi-Target
-   Estimation** in PhotonVision, confirm the camera is named `PC_Camera`.
-4. Set `CAMERA_MOUNT_VERIFIED = true` only after the above. It is intentionally
-   `false` by default. With false, vision cannot establish field pose, but
-   PathPlanner's configured auto start pose can initialize field localization.
-5. Check Robot Alliance from Driver Station. If alliance is absent, HUB LOCK
-   pauses rather than aiming at a guessed target.
-6. Confirm physical Drive controllers: current branch still uses SPARK MAX
-   on CAN 1-8; the supplied ZIP used SPARK Flex on Drive CAN 1-4.
-7. Build in WPILib 2026 on the team laptop before any deployment. Conduct
-   supervised low-speed testing with a clear area and ability to disable.
+## REQUIRED calibration before testing
+- In `Constants.VisionConstants`, measure the camera mount from the
+  **swerve robot center** and set `CAMERA_FORWARD_M`, `CAMERA_LEFT_M`,
+  `CAMERA_UP_M` in meters, and the camera's roll/pitch/yaw in degrees.
+  Confirm the camera's reported 90-degree rotation on its actual physical
+  mounting axis. The placeholder all-zero values are NOT calibrated.
+- PhotonVision needs camera intrinsics calibration for the selected resolution
+  and the **correct physical AprilTag size**; otherwise 3D distance can be
+  wrong. Use a stable, stationary tag secured above the floor.
+- ONLY AFTER the above, set `CAMERA_MOUNT_VERIFIED = true`. The shipped
+  value is intentionally **false** to avoid operating with false geometry.
+- Confirm `PC_Camera` network identity and PhotonLib 2026 API version.
+- Robot starting point is *arbitrary*. Its starting local frame is defined
+  by odometry and navX2, not the official field; relative position matters.
+- Test while the robot is stationary first: `Tag Remembered` should become
+  true, `Tag Remembered ID` should equal the printed tag ID, and `Tag
+  Memory X/Y` should stay approximately stable as the robot moves.
+- Use a clear supervised low-speed test space. Verify turning direction at
+  a safe limit before allowing automatic heading. The lock output is
+  clamped to 35% of the project's existing max angular speed.
+- This code has been committed, but a WPILib build and physical validation
+  on the team's installed hardware are still required.
 
-## Known limitations / recovery
-- A robot with no initial field pose cannot target a fixed HUB from
-  gyro data alone. Localize via AprilTag or correct PathPlanner starting pose.
-- Large BUMP wheel slip cannot be reconstructed by navX2 alone. HUB LOCK
-  pauses until reliable tag observations re-localize it; it does NOT claim
-  to keep accurate aiming through completely unobservable motion.
-- If the raw navX2 is reset during the match, a new field pose fix is needed.
-- Offsets from the robot center to the actual Shooter muzzle and
-  shooter exit latency are NOT calibrated here. This v1 aligns the chassis
-  toward the HUB center, not a ballistic lead solution.
-- Single-tag fallback depends on camera calibration and 3D geometry;
-  test tag switching and deliberately bad measurements before real match use.
+## Telemetry (SmartDashboard)
+- `Tag Memory Status`: WAITING, LEARNING_TAG, TAG_REMEMBERED,
+  SINGLE_TAG_FUSED, VERIFYING_RECOVERY, TAG_RELOCALIZED, BUMP_CROSSING, etc.
+- `Tag Remembered`, `Tag Remembered ID`, `Tag Memory X/Y`
+- `Tag Distance M`, `Tag Target Heading Deg`, `Tag Heading Error Deg`
+- `Tag Visible`, `Tag Visible Count`, `Tag Last Visible ID`
+- `Tag Lock Enabled`, `Tag Lock Ready`, `Tag Last Correction Age S`
+- `Bump Active`, `Bump Recovery Required`
 
-References:
-- https://docs.photonvision.org/en/v2026.3.2/docs/programming/photonlib/robot-pose-estimator.html
-- https://docs.photonvision.org/en/v2026.3.3/docs/apriltag-pipelines/multitag.html
-- https://github.wpilib.org/allwpilib/docs/release/java/edu/wpi/first/math/estimator/SwerveDrivePoseEstimator.html
-- https://firstfrc.blob.core.windows.net/frc2026/FieldAssets/2026-field-dimension-dwgs.pdf
+## Limitations
+- This test remembers a point in a *relative coordinate frame*; restarting,
+  resetting the navX, or changing PathPlanner's pose origin requires a fresh
+  tag observation. Saved target does not survive robot reboot.
+- The local field heading is navX2-derived. Unobservable gyro heading drift
+  cannot be fully corrected by this single-tag XY-only recovery. A distant
+  observation or significant yaw offset may degrade aiming.
+- Wheel slip during BUMP cannot be reconstructed perfectly. If the tag
+  cannot be observed again, the lock **waits for recovery**, not a promise
+  of perfect blind aiming.
+- Shooting/Hood aiming is independent and unchanged. The tag height is only
+  used to transform camera observations into a 2D X/Y target for yaw.
+- The future 2026 HUB + MultiTag design will restore alliance HUB center
+  as target while keeping these tested localization principles.
+
+API references:
+- https://docs.photonvision.org/en/latest/docs/programming/photonlib/getting-target-data.html
+- https://github.wpilib.org/allwpilib/docs/release/java/edu/wpi/first/math/estimator/PoseEstimator.html
