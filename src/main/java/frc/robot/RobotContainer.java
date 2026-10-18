@@ -5,7 +5,11 @@
 package frc.robot;
 
 import com.pathplanner.lib.auto.AutoBuilder;
+import edu.wpi.first.apriltag.AprilTagFieldLayout;
 import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Pose3d;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.networktables.GenericEntry;
 import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
@@ -20,6 +24,7 @@ import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.RunCommand;
 import edu.wpi.first.wpilibj2.command.button.JoystickButton;
+import frc.robot.Constants.VisionConstants;
 import frc.robot.Constants.FeederConstants;
 import frc.robot.Constants.HoodConstants;
 import frc.robot.Constants.OIConstants;
@@ -29,6 +34,9 @@ import frc.robot.subsystems.FeederSubsystem;
 import frc.robot.subsystems.HoodSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
 import org.photonvision.PhotonCamera;
+import org.photonvision.PhotonPoseEstimator;
+import org.photonvision.EstimatedRobotPose;
+import java.util.Optional;
 
 /*
  * This class is where the bulk of the robot should be declared. Since Command-based is a
@@ -58,8 +66,9 @@ public class RobotContainer {
   private final SendableChooser<Command> m_autoChooser;
 
   // PhotonVision camera nickname. Must exactly match the nickname in the PhotonVision UI.
-  private static final String kPhotonCameraName = "PC_Camera";
-  private final PhotonCamera m_photonCamera = new PhotonCamera(kPhotonCameraName);
+  private final PhotonCamera m_photonCamera = new PhotonCamera(VisionConstants.CAMERA_NAME);
+  private final PhotonPoseEstimator m_photonPoseEstimator =
+      new PhotonPoseEstimator(VisionConstants.FIELD_LAYOUT, VisionConstants.ROBOT_TO_CAMERA);
 
   // PhotonVision's official aiming example uses target yaw with a proportional gain.
   // DriveSubsystem.drive() accepts a normalized rotation command and scales it by max angular speed.
@@ -77,6 +86,9 @@ public class RobotContainer {
   private boolean m_visionTargetVisible = false;
   private double m_visionTargetYawDegrees = 0.0;
   private double m_lastVisionTargetTimestamp = -1.0;
+  private double m_lastVisionPoseReceivedAt = -1.0;
+  private double m_lastVisionMeasurementTimestamp = -1.0;
+  private Pose2d m_lastRawVisionPose = null;
 
   /**
    * The container for the robot. Contains subsystems, OI devices, and commands.
@@ -103,6 +115,20 @@ public class RobotContainer {
     SmartDashboard.putBoolean("Vision Align Enabled", false);
     SmartDashboard.putBoolean("Vision Target Visible", false);
     SmartDashboard.putNumber("Vision Target Yaw", 0.0);
+    SmartDashboard.putString("Vision Field Layout", "2026 REBUILT Welded");
+    SmartDashboard.putString("Vision Camera", VisionConstants.CAMERA_NAME);
+    SmartDashboard.putBoolean("Vision Pose Fresh", false);
+    SmartDashboard.putNumber("Vision Pose X", 0.0);
+    SmartDashboard.putNumber("Vision Pose Y", 0.0);
+    SmartDashboard.putNumber("Vision Pose Heading", 0.0);
+    SmartDashboard.putNumber("Vision Pose Age (s)", -1.0);
+    SmartDashboard.putNumber("Vision Tag ID", -1.0);
+    SmartDashboard.putString("Vision Pose Solver", "None");
+    // Review the raw pose against real field coordinates before enabling
+    // any vision-based correction to the PathPlanner/drive pose.
+    SmartDashboard.putBoolean("Vision Fusion Enabled", false);
+    SmartDashboard.putBoolean("Vision Reset Pose Request", false);
+    SmartDashboard.putString("Vision Reset Status", "Not requested");
 
     SendableChooser<Command> autoChooser;
     try {
@@ -157,39 +183,118 @@ public class RobotContainer {
   }
 
   /**
-   * Reads the newest PhotonVision result using the same pattern as PhotonVision's official
-   * "Aiming at a Target" example: getAllUnreadResults(), use the newest result, then read yaw.
-   * If there is no new camera frame, keep the most recent valid yaw for a short time instead of
-   * immediately commanding zero rotation.
+   * Read PhotonVision frames exactly once per robot loop. This supplies both
+   * the existing visible-tag yaw aiming and the NEW official-field robot pose.
+   * Runs in disabled, autonomous, and teleop via updateDashboard().
    */
   private void updateVisionTarget() {
-    var results = m_photonCamera.getAllUnreadResults();
-    if (!results.isEmpty()) {
-      // Camera processed at least one new frame since the last call. Use the newest frame.
-      var result = results.get(results.size() - 1);
+    double now = Timer.getFPGATimestamp();
 
-      if (result.hasTargets()) {
-        // For this first version, aim at PhotonVision's best visible AprilTag.
-        var target = result.getBestTarget();
-        if (target != null && target.getFiducialId() >= 0) {
-          m_visionTargetYawDegrees = target.getYaw();
-          m_lastVisionTargetTimestamp = Timer.getFPGATimestamp();
-        }
+    for (var result : m_photonCamera.getAllUnreadResults()) {
+      if (!result.hasTargets()) {
+        continue;
+      }
+
+      var bestTarget = result.getBestTarget();
+      if (bestTarget != null
+          && VisionConstants.FIELD_LAYOUT.getTagPose(bestTarget.getFiducialId()).isPresent()) {
+        m_visionTargetYawDegrees = bestTarget.getYaw();
+        m_lastVisionTargetTimestamp = now;
+        SmartDashboard.putNumber("Vision Tag ID", bestTarget.getFiducialId());
+      }
+
+      // The camera must use the SAME official Welded JSON in PhotonVision UI.
+      // Coprocessor MultiTag is preferred; valid single-tag measurements
+      // provide a fallback when only one AprilTag is visible.
+      Optional<EstimatedRobotPose> estimate =
+          m_photonPoseEstimator.estimateCoprocMultiTagPose(result);
+      boolean multiTag = estimate.isPresent();
+
+      if (!multiTag
+          && bestTarget != null
+          && VisionConstants.FIELD_LAYOUT.getTagPose(bestTarget.getFiducialId()).isPresent()
+          && bestTarget.getPoseAmbiguity() >= 0.0
+          && bestTarget.getPoseAmbiguity() <= VisionConstants.MAX_SINGLE_TAG_AMBIGUITY
+          && bestTarget.getBestCameraToTarget().getTranslation().getNorm()
+              <= VisionConstants.MAX_SINGLE_TAG_DISTANCE_M) {
+        estimate = m_photonPoseEstimator.estimateLowestAmbiguityPose(result);
+      }
+
+      if (estimate.isEmpty()) {
+        continue;
+      }
+
+      var measurement = estimate.get();
+      Pose3d pose3d = measurement.estimatedPose;
+      Pose2d measuredPose = pose3d.toPose2d();
+      double timestamp = measurement.timestampSeconds;
+      AprilTagFieldLayout layout = VisionConstants.FIELD_LAYOUT;
+      double tolerance = VisionConstants.FIELD_BOUNDS_TOLERANCE_M;
+
+      // Reject invalid/out-of-field/camera-tilt poses and out-of-order frames.
+      if (!Double.isFinite(timestamp)
+          || timestamp <= m_lastVisionMeasurementTimestamp
+          || timestamp > Timer.getFPGATimestamp() + 0.1
+          || timestamp < Timer.getFPGATimestamp() - 1.0
+          || !Double.isFinite(pose3d.getX())
+          || !Double.isFinite(pose3d.getY())
+          || !Double.isFinite(pose3d.getZ())
+          || !Double.isFinite(pose3d.getRotation().getX())
+          || !Double.isFinite(pose3d.getRotation().getY())
+          || !Double.isFinite(pose3d.getRotation().getZ())
+          || Math.abs(pose3d.getZ()) > VisionConstants.MAX_ABS_ESTIMATED_HEIGHT_M
+          || Math.abs(pose3d.getRotation().getX()) > Math.toRadians(25.0)
+          || Math.abs(pose3d.getRotation().getY()) > Math.toRadians(25.0)
+          || measuredPose.getX() < -tolerance
+          || measuredPose.getX() > layout.getFieldLength() + tolerance
+          || measuredPose.getY() < -tolerance
+          || measuredPose.getY() > layout.getFieldWidth() + tolerance) {
+        continue;
+      }
+
+      m_lastRawVisionPose = measuredPose;
+      m_lastVisionMeasurementTimestamp = timestamp;
+      m_lastVisionPoseReceivedAt = Timer.getFPGATimestamp();
+      m_robotDrive.showVisionPose(measuredPose);
+
+      SmartDashboard.putNumber("Vision Pose X", measuredPose.getX());
+      SmartDashboard.putNumber("Vision Pose Y", measuredPose.getY());
+      SmartDashboard.putNumber("Vision Pose Heading", measuredPose.getRotation().getDegrees());
+      SmartDashboard.putString("Vision Pose Solver", multiTag ? "MultiTag" : "SingleTag");
+
+      // Disabled by default: opt in only after checking camera transform and
+      // raw position on the physical practice field.
+      if (SmartDashboard.getBoolean("Vision Fusion Enabled", false)) {
+        m_robotDrive.addVisionMeasurement(measuredPose, timestamp, multiTag);
       }
     }
 
-    // The robot loop can run faster than PhotonVision produces frames. Keep using the most recent
-    // valid target between frames, and only stop after the target has actually been gone long enough.
     m_visionTargetVisible = m_lastVisionTargetTimestamp >= 0.0
-        && (Timer.getFPGATimestamp() - m_lastVisionTargetTimestamp) <= kVisionTargetHoldSeconds;
-
+        && (now - m_lastVisionTargetTimestamp) <= kVisionTargetHoldSeconds;
     if (!m_visionTargetVisible) {
       m_visionTargetYawDegrees = 0.0;
     }
 
+    double poseAgeSeconds = m_lastVisionPoseReceivedAt < 0.0
+        ? -1.0 : now - m_lastVisionPoseReceivedAt;
+    boolean poseFresh = poseAgeSeconds >= 0.0 && poseAgeSeconds <= 0.5;
     SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
     SmartDashboard.putBoolean("Vision Target Visible", m_visionTargetVisible);
     SmartDashboard.putNumber("Vision Target Yaw", m_visionTargetYawDegrees);
+    SmartDashboard.putBoolean("Vision Pose Fresh", poseFresh);
+    SmartDashboard.putNumber("Vision Pose Age (s)", poseAgeSeconds);
+
+    // Explicit one-shot pose initialization, only while Disabled and while a
+    // fresh, vetted raw pose is available. Never auto-reset during a match.
+    if (SmartDashboard.getBoolean("Vision Reset Pose Request", false)) {
+      if (DriverStation.isDisabled() && poseFresh && m_lastRawVisionPose != null) {
+        m_robotDrive.resetOdometry(m_lastRawVisionPose);
+        SmartDashboard.putString("Vision Reset Status", "Applied while Disabled");
+      } else {
+        SmartDashboard.putString("Vision Reset Status", "Rejected: Disable and show a valid tag");
+      }
+      SmartDashboard.putBoolean("Vision Reset Pose Request", false);
+    }
   }
 
   /**
@@ -197,8 +302,6 @@ public class RobotContainer {
    * AprilTag is visible, it overrides manual rotation with PhotonVision yaw-based aiming.
    */
   private double getDriveRotationCommand() {
-    updateVisionTarget();
-
     if (!m_visionAlignEnabled) {
       return getTriggerRotation();
     }
@@ -268,6 +371,7 @@ public class RobotContainer {
 
   /** Publishes dashboard-only state that is not owned by a subsystem. */
   public void updateDashboard() {
+    updateVisionTarget();
     Command selectedAuto = m_autoChooser.getSelected();
     SmartDashboard.putString(
         "Selected Auto",

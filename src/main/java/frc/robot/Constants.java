@@ -4,6 +4,11 @@
 
 package frc.robot;
 
+import edu.wpi.first.apriltag.AprilTagFieldLayout;
+import edu.wpi.first.apriltag.AprilTagFields;
+import edu.wpi.first.math.geometry.Rotation3d;
+import edu.wpi.first.math.geometry.Transform3d;
+import edu.wpi.first.math.geometry.Translation3d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.SwerveDriveKinematics;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
@@ -122,6 +127,32 @@ public final class Constants {
     public static final int FEEDER_11_ID = 11;
     public static final int FEEDER_14_ID = 14;
     public static final double TEST_SPEED = 0.50;
+  }
+
+  /** 2026 REBUILT official (Welded) field coordinate and camera mount. */
+  public static final class VisionConstants {
+    public static final String CAMERA_NAME = "PC_Camera";
+    public static final AprilTagFieldLayout FIELD_LAYOUT =
+        AprilTagFieldLayout.loadField(AprilTagFields.k2026RebuiltWelded);
+
+    // Previously measured on this robot, in WPILib robot coordinates:
+    // X forward, Y left, Z up. Verify the optical axis/pitch with a known tag.
+    public static final double CAMERA_FORWARD_M = 0.31732884884;
+    public static final double CAMERA_LEFT_M = 0.0;
+    public static final double CAMERA_UP_M = 0.40394608582;
+    public static final double CAMERA_ROLL_DEG = 0.0;
+    public static final double CAMERA_PITCH_DEG = -25.0;
+    public static final double CAMERA_YAW_DEG = 0.0;
+    public static final Transform3d ROBOT_TO_CAMERA = new Transform3d(
+        new Translation3d(CAMERA_FORWARD_M, CAMERA_LEFT_M, CAMERA_UP_M),
+        new Rotation3d(Math.toRadians(CAMERA_ROLL_DEG),
+            Math.toRadians(CAMERA_PITCH_DEG), Math.toRadians(CAMERA_YAW_DEG)));
+
+    // Conservative validation for single-AprilTag estimates.
+    public static final double MAX_SINGLE_TAG_AMBIGUITY = 0.25;
+    public static final double MAX_SINGLE_TAG_DISTANCE_M = 4.0;
+    public static final double MAX_ABS_ESTIMATED_HEIGHT_M = 0.5;
+    public static final double FIELD_BOUNDS_TOLERANCE_M = 0.35;
   }
 
   public static final class HoodConstants {

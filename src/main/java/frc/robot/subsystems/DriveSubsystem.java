@@ -13,11 +13,12 @@ import com.studica.frc.AHRS;
 import edu.wpi.first.hal.FRCNetComm.tInstances;
 import edu.wpi.first.hal.FRCNetComm.tResourceType;
 import edu.wpi.first.hal.HAL;
+import edu.wpi.first.math.VecBuilder;
+import edu.wpi.first.math.estimator.SwerveDrivePoseEstimator;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.kinematics.SwerveDriveKinematics;
-import edu.wpi.first.math.kinematics.SwerveDriveOdometry;
 import edu.wpi.first.math.kinematics.SwerveModulePosition;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
 import edu.wpi.first.wpilibj.DriverStation;
@@ -57,8 +58,8 @@ public class DriveSubsystem extends SubsystemBase {
   // Field visualization for odometry testing.
   private final Field2d m_field = new Field2d();
 
-  // Odometry class for tracking robot pose.
-  SwerveDriveOdometry m_odometry = new SwerveDriveOdometry(
+  // Swerve/navX2 odometry with optional, latency-compensated vision fusion.
+  private final SwerveDrivePoseEstimator m_poseEstimator = new SwerveDrivePoseEstimator(
       DriveConstants.kDriveKinematics,
       getGyroRotation(),
       new SwerveModulePosition[] {
@@ -66,7 +67,8 @@ public class DriveSubsystem extends SubsystemBase {
           m_frontRight.getPosition(),
           m_rearLeft.getPosition(),
           m_rearRight.getPosition()
-      });
+      },
+      new Pose2d());
 
   /** Creates a new DriveSubsystem. */
   public DriveSubsystem() {
@@ -142,7 +144,7 @@ public class DriveSubsystem extends SubsystemBase {
 
   @Override
   public void periodic() {
-    m_odometry.update(
+    m_poseEstimator.update(
         getGyroRotation(),
         new SwerveModulePosition[] {
             m_frontLeft.getPosition(),
@@ -226,7 +228,7 @@ public class DriveSubsystem extends SubsystemBase {
    * @return The pose.
    */
   public Pose2d getPose() {
-    return m_odometry.getPoseMeters();
+    return m_poseEstimator.getEstimatedPosition();
   }
 
   /**
@@ -235,7 +237,7 @@ public class DriveSubsystem extends SubsystemBase {
    * @param pose The pose to which to set the odometry.
    */
   public void resetOdometry(Pose2d pose) {
-    m_odometry.resetPosition(
+    m_poseEstimator.resetPosition(
         getGyroRotation(),
         new SwerveModulePosition[] {
             m_frontLeft.getPosition(),
@@ -319,6 +321,23 @@ public class DriveSubsystem extends SubsystemBase {
     m_frontRight.setDesiredState(desiredStates[1]);
     m_rearLeft.setDesiredState(desiredStates[2]);
     m_rearRight.setDesiredState(desiredStates[3]);
+  }
+
+  /** Plot accepted camera-only estimates separately from the fused field pose. */
+  public void showVisionPose(Pose2d visionPose) {
+    m_field.getObject("Vision Raw Pose").setPose(visionPose);
+  }
+
+  /**
+   * Fuse a timestamped camera estimate into swerve/navX2 odometry.
+   * Single-tag estimates are assigned substantially larger uncertainty.
+   */
+  public void addVisionMeasurement(Pose2d visionPose, double timestampSeconds, boolean multiTag) {
+    double xyStdDevMeters = multiTag ? 0.35 : 1.0;
+    double angleStdDevRadians = multiTag ? 0.5 : 2.0;
+    m_poseEstimator.addVisionMeasurement(
+        visionPose, timestampSeconds,
+        VecBuilder.fill(xyStdDevMeters, xyStdDevMeters, angleStdDevRadians));
   }
 
   /** Resets the drive encoders to currently read a position of 0. */
