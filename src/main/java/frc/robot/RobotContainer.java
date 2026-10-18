@@ -359,6 +359,13 @@ public class RobotContainer {
     new JoystickButton(m_driverController, XboxController.Button.kY.value)
         .onTrue(new InstantCommand(this::toggleFieldRelative));
 
+    // Hold LB to run the intake; release or interruption stops both rollers.
+    new JoystickButton(m_driverController, XboxController.Button.kLeftBumper.value)
+        .whileTrue(Commands.runEnd(
+            m_intake::runIntake,
+            m_intake::stopIntake,
+            m_intake));
+
     // Original right-bumper X-lock behavior.
     new JoystickButton(m_driverController, XboxController.Button.kRightBumper.value)
         .whileTrue(new RunCommand(
