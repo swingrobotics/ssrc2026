@@ -4,24 +4,24 @@
     {
       "anchor": {
         "x": 2.0,
-        "y": 7.0
+        "y": 0.75
       },
       "prevControl": null,
       "nextControl": {
-        "x": 3.0,
-        "y": 7.0
+        "x": 2.033566333808844,
+        "y": 3.291027104136948
       },
       "isLocked": false,
-      "linkedName": null
+      "linkedName": "shoot 1"
     },
     {
       "anchor": {
-        "x": 3.0,
-        "y": 7.0
+        "x": 7.040827389443652,
+        "y": 0.8844365192582018
       },
       "prevControl": {
-        "x": 2.0,
-        "y": 7.0
+        "x": 6.911440798858774,
+        "y": 4.067346647646221
       },
       "nextControl": null,
       "isLocked": false,
@@ -48,7 +48,7 @@
   "folder": null,
   "idealStartingState": {
     "velocity": 0,
-    "rotation": 0.0
+    "rotation": -135.0
   },
   "useDefaultConstraints": true
 }

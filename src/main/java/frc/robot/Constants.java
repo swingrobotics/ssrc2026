@@ -123,8 +123,11 @@ public final class Constants {
     public static final int HOOD_ENCODER_DIO = 0;
     public static final double TEST_MAX_SPEED = 0.08;
     // Actual values in the ZIP's Constants.java (README had outdated values).
-    public static final double MIN_POSITION = 0.2687;
-    public static final double MAX_POSITION = 0.4989;
+
+    public static final boolean CALIBRATION_MODE = false;
+    
+    public static final double MIN_POSITION = 0.196;
+    public static final double MAX_POSITION = 0.410;
     public static final boolean POSITIVE_OUTPUT_INCREASES_ENCODER = false;
   }
 }
