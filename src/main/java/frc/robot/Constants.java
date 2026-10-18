@@ -31,16 +31,22 @@ public final class Constants {
     public static final double kMaxAngularSpeed = 1 * Math.PI; // radians per second  위쪽 주석을 수정함
 
 
-    // Chassis configuration
-    public static final double kTrackWidth = Units.inchesToMeters(28); //길이 직접 측정후 입력함
-    // Distance between centers of right and left wheels on robot
-    public static final double kWheelBase = Units.inchesToMeters(27); //길이 직접 측정후 입력함
-    // Distance between front and back wheels on robot
+    // Keep the team's prior measured chassis dimensions separate from the
+    // measured SWERVE MODULE CENTERS in PathPlanner (these differ from the
+    // chassis outline and the overall bumper dimensions).
+    public static final double kMeasuredChassisWidthMeters = Units.inchesToMeters(28);
+    public static final double kMeasuredChassisLengthMeters = Units.inchesToMeters(27);
+
+    // Measured module center spans from pathplanner/settings.json.
+    // The rear-left X offset is 0.0005 m farther back than rear-right,
+    // so kinematics below uses each exact measurement rather than symmetry.
+    public static final double kTrackWidth = 0.614;
+    public static final double kWheelBase = 0.55325;
     public static final SwerveDriveKinematics kDriveKinematics = new SwerveDriveKinematics(
-        new Translation2d(kWheelBase / 2, kTrackWidth / 2),
-        new Translation2d(kWheelBase / 2, -kTrackWidth / 2),
-        new Translation2d(-kWheelBase / 2, kTrackWidth / 2),
-        new Translation2d(-kWheelBase / 2, -kTrackWidth / 2));
+        new Translation2d(0.2765, 0.307),     // FL
+        new Translation2d(0.2765, -0.307),    // FR
+        new Translation2d(-0.277, 0.307),     // RL
+        new Translation2d(-0.2765, -0.307));  // RR
 
     // Angular offsets of the modules relative to the chassis in radians
     public static final double kFrontLeftChassisAngularOffset = -Math.PI / 2;
