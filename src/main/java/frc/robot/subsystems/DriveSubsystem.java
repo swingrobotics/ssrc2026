@@ -23,7 +23,8 @@ import edu.wpi.first.math.kinematics.SwerveModulePosition;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.smartdashboard.Field2d;
-import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
+import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.DriveConstants;
 import java.util.List;
@@ -57,6 +58,12 @@ public class DriveSubsystem extends SubsystemBase {
 
   // Field visualization for odometry testing.
   private final Field2d m_field = new Field2d();
+  private boolean m_pathPlannerConfigured = false;
+  private boolean m_pathPlannerTargetValid = false;
+  private String m_pathPlannerActivePath = "";
+  private int m_pathPlannerPathPoints = 0;
+  private Pose2d m_pathPlannerCurrentPose = new Pose2d();
+  private Pose2d m_pathPlannerTargetPose = new Pose2d();
 
   // Swerve/navX2 odometry with optional, latency-compensated vision fusion.
   private final SwerveDrivePoseEstimator m_poseEstimator = new SwerveDrivePoseEstimator(
@@ -73,13 +80,43 @@ public class DriveSubsystem extends SubsystemBase {
   /** Creates a new DriveSubsystem. */
   public DriveSubsystem() {
     HAL.report(tResourceType.kResourceType_RobotDrive, tInstances.kRobotDriveSwerve_MaxSwerve);
-    SmartDashboard.putData("Field", m_field);
-    SmartDashboard.putString("PathPlanner Active Path", "");
-    SmartDashboard.putNumber("PathPlanner Path Points", 0);
-    SmartDashboard.putBoolean("PathPlanner Target Valid", false);
-    SmartDashboard.putNumber("PathPlanner Target X", 0.0);
-    SmartDashboard.putNumber("PathPlanner Target Y", 0.0);
-    SmartDashboard.putNumber("PathPlanner Target Heading", 0.0);
+    ShuffleboardTab driveTab = Shuffleboard.getTab("Drive");
+    driveTab.add("Field", m_field);
+    driveTab.addDouble("Pose X (m)", () -> getPose().getX());
+    driveTab.addDouble("Pose Y (m)", () -> getPose().getY());
+    driveTab.addDouble("Pose Heading (deg)", () -> getPose().getRotation().getDegrees());
+    driveTab.addBoolean("NavX Connected", m_gyro::isConnected);
+    driveTab.addBoolean("PathPlanner Ready", () -> m_pathPlannerConfigured);
+
+    ShuffleboardTab debug = Shuffleboard.getTab("Debug");
+    debug.addBoolean("NavX Calibrating", m_gyro::isCalibrating);
+    debug.addDouble("NavX Heading", this::getHeading);
+    debug.addDouble("NavX Turn Rate", this::getTurnRate);
+    debug.addDouble("NavX Yaw", m_gyro::getYaw);
+    debug.addDouble("NavX Pitch", m_gyro::getPitch);
+    debug.addDouble("NavX Roll", m_gyro::getRoll);
+    debug.addDouble("NavX Compass Heading", m_gyro::getCompassHeading);
+    debug.addDouble("NavX Fused Heading", m_gyro::getFusedHeading);
+    debug.addBoolean("NavX Moving", m_gyro::isMoving);
+    debug.addBoolean("NavX Rotating", m_gyro::isRotating);
+    debug.addDouble("Robot Velocity X", () -> getRobotRelativeSpeeds().vxMetersPerSecond);
+    debug.addDouble("Robot Velocity Y", () -> getRobotRelativeSpeeds().vyMetersPerSecond);
+    debug.addDouble("Robot Angular Velocity",
+        () -> Math.toDegrees(getRobotRelativeSpeeds().omegaRadiansPerSecond));
+    debug.addBoolean("Autonomous Enabled", DriverStation::isAutonomousEnabled);
+    debug.addBoolean("PP Target Valid", () -> m_pathPlannerTargetValid);
+    debug.addDouble("PP Target X", () -> m_pathPlannerTargetPose.getX());
+    debug.addDouble("PP Target Y", () -> m_pathPlannerTargetPose.getY());
+    debug.addDouble("PP Target Heading", () -> m_pathPlannerTargetPose.getRotation().getDegrees());
+    debug.addDouble("PP Current X", () -> m_pathPlannerCurrentPose.getX());
+    debug.addDouble("PP Current Y", () -> m_pathPlannerCurrentPose.getY());
+    debug.addDouble("PP Current Heading", () -> m_pathPlannerCurrentPose.getRotation().getDegrees());
+    debug.addDouble("PP Path Points", () -> m_pathPlannerPathPoints);
+    debug.addString("PP Active Path", () -> m_pathPlannerActivePath);
+    addModuleDiagnostics(debug, "FL", m_frontLeft);
+    addModuleDiagnostics(debug, "FR", m_frontRight);
+    addModuleDiagnostics(debug, "RL", m_rearLeft);
+    addModuleDiagnostics(debug, "RR", m_rearRight);
 
     configurePathPlanner();
   }
@@ -107,35 +144,29 @@ public class DriveSubsystem extends SubsystemBase {
       PathPlannerLogging.setLogCurrentPoseCallback(
           pose -> {
             m_field.setRobotPose(pose);
-            SmartDashboard.putNumber("PathPlanner Current X", pose.getX());
-            SmartDashboard.putNumber("PathPlanner Current Y", pose.getY());
-            SmartDashboard.putNumber(
-                "PathPlanner Current Heading", pose.getRotation().getDegrees());
+            m_pathPlannerCurrentPose = pose;
           });
 
       PathPlannerLogging.setLogTargetPoseCallback(
           pose -> {
             m_field.getObject("PathPlanner Target").setPose(pose);
-            SmartDashboard.putBoolean("PathPlanner Target Valid", true);
-            SmartDashboard.putNumber("PathPlanner Target X", pose.getX());
-            SmartDashboard.putNumber("PathPlanner Target Y", pose.getY());
-            SmartDashboard.putNumber(
-                "PathPlanner Target Heading", pose.getRotation().getDegrees());
+            m_pathPlannerTargetValid = true;
+            m_pathPlannerTargetPose = pose;
           });
 
       PathPlannerLogging.setLogActivePathCallback(
           poses -> {
             m_field.getObject("PathPlanner Path").setPoses(poses);
-            SmartDashboard.putString("PathPlanner Active Path", serializePath(poses));
-            SmartDashboard.putNumber("PathPlanner Path Points", poses.size());
+            m_pathPlannerActivePath = serializePath(poses);
+            m_pathPlannerPathPoints = poses.size();
             if (poses.isEmpty()) {
-              SmartDashboard.putBoolean("PathPlanner Target Valid", false);
+              m_pathPlannerTargetValid = false;
             }
           });
 
-      SmartDashboard.putBoolean("PathPlanner Configured", true);
+      m_pathPlannerConfigured = true;
     } catch (Exception e) {
-      SmartDashboard.putBoolean("PathPlanner Configured", false);
+      m_pathPlannerConfigured = false;
       DriverStation.reportError(
           "Failed to configure PathPlanner. Save Robot Config in the PathPlanner GUI first.",
           e.getStackTrace());
@@ -153,52 +184,19 @@ public class DriveSubsystem extends SubsystemBase {
             m_rearRight.getPosition()
         });
 
-    // navX2 status/orientation values.
-    SmartDashboard.putBoolean("NavX Connected", m_gyro.isConnected());
-    SmartDashboard.putBoolean("NavX Calibrating", m_gyro.isCalibrating());
-    SmartDashboard.putNumber("NavX Heading", getHeading());
-    SmartDashboard.putNumber("NavX Turn Rate", getTurnRate());
-    SmartDashboard.putNumber("NavX Yaw", m_gyro.getYaw());
-    SmartDashboard.putNumber("NavX Pitch", m_gyro.getPitch());
-    SmartDashboard.putNumber("NavX Roll", m_gyro.getRoll());
-    SmartDashboard.putNumber("NavX Compass Heading", m_gyro.getCompassHeading());
-    SmartDashboard.putNumber("NavX Fused Heading", m_gyro.getFusedHeading());
-    SmartDashboard.putBoolean("NavX Moving", m_gyro.isMoving());
-    SmartDashboard.putBoolean("NavX Rotating", m_gyro.isRotating());
-
-    // Pose/odometry values for comparison with the ADIS test branch.
-    Pose2d pose = getPose();
-    m_field.setRobotPose(pose);
-    SmartDashboard.putNumber("Pose X", pose.getX());
-    SmartDashboard.putNumber("Pose Y", pose.getY());
-    SmartDashboard.putNumber("Pose Heading", pose.getRotation().getDegrees());
-
-    ChassisSpeeds robotSpeeds = getRobotRelativeSpeeds();
-    SmartDashboard.putNumber("Robot Velocity X", robotSpeeds.vxMetersPerSecond);
-    SmartDashboard.putNumber("Robot Velocity Y", robotSpeeds.vyMetersPerSecond);
-    SmartDashboard.putNumber(
-        "Robot Angular Velocity", Math.toDegrees(robotSpeeds.omegaRadiansPerSecond));
-    SmartDashboard.putBoolean("Autonomous Enabled", DriverStation.isAutonomousEnabled());
-
-    publishModuleTelemetry("FL", m_frontLeft);
-    publishModuleTelemetry("FR", m_frontRight);
-    publishModuleTelemetry("RL", m_rearLeft);
-    publishModuleTelemetry("RR", m_rearRight);
+    // Update the field visualization. Other values are live Shuffleboard suppliers.
+    m_field.setRobotPose(getPose());
   }
 
-  /** Publishes measured and optimized target state for one swerve module. */
-  private static void publishModuleTelemetry(String name, MAXSwerveModule module) {
-    SwerveModuleState actual = module.getState();
-    SwerveModuleState target = module.getDesiredState();
-
-    SmartDashboard.putNumber(
-        "Swerve " + name + " Actual Speed", actual.speedMetersPerSecond);
-    SmartDashboard.putNumber(
-        "Swerve " + name + " Actual Angle", actual.angle.getDegrees());
-    SmartDashboard.putNumber(
-        "Swerve " + name + " Target Speed", target.speedMetersPerSecond);
-    SmartDashboard.putNumber(
-        "Swerve " + name + " Target Angle", target.angle.getDegrees());
+  /** Full per-module values are retained on Debug, away from match controls. */
+  private static void addModuleDiagnostics(ShuffleboardTab debug, String name, MAXSwerveModule module) {
+    debug.addDouble("Swerve " + name + " Actual Speed", () -> module.getState().speedMetersPerSecond);
+    debug.addDouble("Swerve " + name + " Actual Angle",
+        () -> module.getState().angle.getDegrees());
+    debug.addDouble("Swerve " + name + " Target Speed",
+        () -> module.getDesiredState().speedMetersPerSecond);
+    debug.addDouble("Swerve " + name + " Target Angle",
+        () -> module.getDesiredState().angle.getDegrees());
   }
 
   /** Serializes the active PathPlanner path for the custom dashboard. */

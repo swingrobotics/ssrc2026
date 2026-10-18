@@ -57,48 +57,48 @@ public class HoodSubsystem extends SubsystemBase {
 
         // A signed, conservative gravity-feedforward adjustment.
         // 0% is intentionally the initial value; never guess lifting direction.
-        gravityAssistEntry = Shuffleboard.getTab("Test")
+        gravityAssistEntry = Shuffleboard.getTab("Hood")
                 .add("Hood Gravity Assist (%)", 0.0)
                 .withWidget(BuiltInWidgets.kNumberSlider)
                 .withProperties(Map.of("min", -8.0, "max", 8.0))
                 .getEntry();
 
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Hood")
                 .addDouble("Hood Encoder", this::getEncoderPosition);
 
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Debug")
                 .addBoolean("Hood Encoder Connected", hoodEncoder::isConnected);
 
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Debug")
                 .addBoolean("Hood Calibration Mode",
                         () -> HoodConstants.CALIBRATION_MODE);
 
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Debug")
                 .addBoolean("Hood Limits Configured", this::limitsConfigured);
 
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Debug")
                 .addBoolean("Hood At Min", this::isAtMin);
 
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Debug")
                 .addBoolean("Hood At Max", this::isAtMax);
 
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Hood")
                 .addBoolean("Hood Ready", this::isHoodReady);
 
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Hood")
                 .addBoolean("Hood Hold Active",
                         () -> !HoodConstants.CALIBRATION_MODE
                                 && Double.isFinite(holdTarget));
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Debug")
                 .addDouble("Hood Hold Target",
                         () -> Double.isFinite(holdTarget) ? holdTarget : -1.0);
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Debug")
                 .addDouble("Hood Hold Error",
                         () -> Double.isFinite(holdTarget) && isHoodReady()
                                 ? holdTarget - getEncoderPosition() : 0.0);
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Hood")
                 .addDouble("Hood Hold Output", () -> holdOutput);
-        Shuffleboard.getTab("Test")
+        Shuffleboard.getTab("Debug")
                 .addDouble("Hood Gravity Assist Applied (%)",
                         () -> appliedGravityAssist * 100.0);
     }

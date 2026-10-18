@@ -18,7 +18,6 @@ import java.util.Map;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
-import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.InstantCommand;
@@ -58,6 +57,11 @@ public class RobotContainer {
   private final GenericEntry m_driveSpeedEntry;
   private final GenericEntry m_shooterSpeedEntry;
   private final GenericEntry m_feederSpeedEntry;
+  private final GenericEntry m_visionFusionEntry;
+  private final GenericEntry m_visionResetEntry;
+  private double m_lastTagId = -1.0;
+  private String m_poseSolver = "None";
+  private String m_visionResetStatus = "Not requested";
 
   // The driver's controller
   XboxController m_driverController = new XboxController(OIConstants.kDriverControllerPort);
@@ -94,41 +98,44 @@ public class RobotContainer {
    * The container for the robot. Contains subsystems, OI devices, and commands.
    */
   public RobotContainer() {
-    // Preserve the mechanism ZIP's Test-tab output sliders, in percent.
-    ShuffleboardTab testTab = Shuffleboard.getTab("Test");
-    m_driveSpeedEntry = testTab.add("Drive Speed (%)", kDefaultDrivePercent)
+    // Driver view: controls and live pose only.
+    ShuffleboardTab driveTab = Shuffleboard.getTab("Drive");
+    m_driveSpeedEntry = driveTab.add("Drive Speed (%)", kDefaultDrivePercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 0.0, "max", 100.0))
-        .getEntry();
-    m_shooterSpeedEntry = testTab.add("Shooter Speed (%)", kDefaultShooterPercent)
+        .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
+    m_shooterSpeedEntry = driveTab.add("Shooter Speed (%)", kDefaultShooterPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 0.0, "max", 100.0))
-        .getEntry();
-    m_feederSpeedEntry = testTab.add("Feeder Speed (%)", kDefaultFeederPercent)
+        .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
+    m_feederSpeedEntry = driveTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 0.0, "max", 100.0))
-        .getEntry();
+        .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
+    driveTab.addBoolean("Field Relative", () -> m_fieldRelativeEnabled);
+    driveTab.addBoolean("Tag Auto Align", () -> m_visionAlignEnabled);
+
+    // Vision view: minimal AprilTag pose readings and operator-controlled fusion.
+    ShuffleboardTab visionTab = Shuffleboard.getTab("Vision");
+    visionTab.addBoolean("Tag Visible", () -> m_visionTargetVisible);
+    visionTab.addDouble("Tag ID", () -> m_lastTagId);
+    visionTab.addBoolean("Pose Fresh", this::isVisionPoseFresh);
+    visionTab.addDouble("Raw Pose X (m)",
+        () -> m_lastRawVisionPose == null ? -1.0 : m_lastRawVisionPose.getX());
+    visionTab.addDouble("Raw Pose Y (m)",
+        () -> m_lastRawVisionPose == null ? -1.0 : m_lastRawVisionPose.getY());
+    visionTab.addDouble("Raw Heading (deg)",
+        () -> m_lastRawVisionPose == null ? 0.0
+            : m_lastRawVisionPose.getRotation().getDegrees());
+    visionTab.addString("Pose Solver", () -> m_poseSolver);
+    m_visionFusionEntry = visionTab.add("Fusion Enabled", false).getEntry();
+    m_visionResetEntry = visionTab.add("Reset Pose (Disabled)", false).getEntry();
+    visionTab.addString("Reset Status", () -> m_visionResetStatus);
+
+    ShuffleboardTab debugTab = Shuffleboard.getTab("Debug");
+    debugTab.addString("Vision Field Layout", () -> "2026 REBUILT Welded");
+    debugTab.addString("Vision Camera", () -> VisionConstants.CAMERA_NAME);
+    debugTab.addDouble("Vision Target Yaw", () -> m_visionTargetYawDegrees);
+    debugTab.addDouble("Vision Pose Age (s)", this::getVisionPoseAgeSeconds);
 
     configureButtonBindings();
-
-    SmartDashboard.putBoolean("Field Relative Enabled", m_fieldRelativeEnabled);
-    SmartDashboard.putBoolean("Vision Align Enabled", false);
-    SmartDashboard.putBoolean("Vision Target Visible", false);
-    SmartDashboard.putNumber("Vision Target Yaw", 0.0);
-    SmartDashboard.putString("Vision Field Layout", "2026 REBUILT Welded");
-    SmartDashboard.putString("Vision Camera", VisionConstants.CAMERA_NAME);
-    SmartDashboard.putBoolean("Vision Pose Fresh", false);
-    SmartDashboard.putNumber("Vision Pose X", 0.0);
-    SmartDashboard.putNumber("Vision Pose Y", 0.0);
-    SmartDashboard.putNumber("Vision Pose Heading", 0.0);
-    SmartDashboard.putNumber("Vision Pose Age (s)", -1.0);
-    SmartDashboard.putNumber("Vision Tag ID", -1.0);
-    SmartDashboard.putString("Vision Pose Solver", "None");
-    // Review the raw pose against real field coordinates before enabling
-    // any vision-based correction to the PathPlanner/drive pose.
-    SmartDashboard.putBoolean("Vision Fusion Enabled", false);
-    SmartDashboard.putBoolean("Vision Reset Pose Request", false);
-    SmartDashboard.putString("Vision Reset Status", "Not requested");
 
     SendableChooser<Command> autoChooser;
     try {
@@ -138,8 +145,11 @@ public class RobotContainer {
       autoChooser.setDefaultOption("None", Commands.none());
     }
     m_autoChooser = autoChooser;
-    SmartDashboard.putData("Auto Chooser", m_autoChooser);
-    SmartDashboard.putString("Selected Auto", "None");
+    driveTab.add("Auto Chooser", m_autoChooser);
+    driveTab.addString("Selected Auto", () -> {
+      Command chosen = m_autoChooser.getSelected();
+      return chosen != null ? chosen.getName() : "None";
+    });
 
     m_robotDrive.setDefaultCommand(
         new RunCommand(
@@ -200,7 +210,7 @@ public class RobotContainer {
           && VisionConstants.FIELD_LAYOUT.getTagPose(bestTarget.getFiducialId()).isPresent()) {
         m_visionTargetYawDegrees = bestTarget.getYaw();
         m_lastVisionTargetTimestamp = now;
-        SmartDashboard.putNumber("Vision Tag ID", bestTarget.getFiducialId());
+        m_lastTagId = bestTarget.getFiducialId();
       }
 
       // The camera must use the SAME official Welded JSON in PhotonVision UI.
@@ -257,14 +267,11 @@ public class RobotContainer {
       m_lastVisionPoseReceivedAt = Timer.getFPGATimestamp();
       m_robotDrive.showVisionPose(measuredPose);
 
-      SmartDashboard.putNumber("Vision Pose X", measuredPose.getX());
-      SmartDashboard.putNumber("Vision Pose Y", measuredPose.getY());
-      SmartDashboard.putNumber("Vision Pose Heading", measuredPose.getRotation().getDegrees());
-      SmartDashboard.putString("Vision Pose Solver", multiTag ? "MultiTag" : "SingleTag");
+      m_poseSolver = multiTag ? "MultiTag" : "SingleTag";
 
       // Disabled by default: opt in only after checking camera transform and
       // raw position on the physical practice field.
-      if (SmartDashboard.getBoolean("Vision Fusion Enabled", false)) {
+      if (m_visionFusionEntry.getBoolean(false)) {
         m_robotDrive.addVisionMeasurement(measuredPose, timestamp, multiTag);
       }
     }
@@ -278,22 +285,16 @@ public class RobotContainer {
     double poseAgeSeconds = m_lastVisionPoseReceivedAt < 0.0
         ? -1.0 : now - m_lastVisionPoseReceivedAt;
     boolean poseFresh = poseAgeSeconds >= 0.0 && poseAgeSeconds <= 0.5;
-    SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
-    SmartDashboard.putBoolean("Vision Target Visible", m_visionTargetVisible);
-    SmartDashboard.putNumber("Vision Target Yaw", m_visionTargetYawDegrees);
-    SmartDashboard.putBoolean("Vision Pose Fresh", poseFresh);
-    SmartDashboard.putNumber("Vision Pose Age (s)", poseAgeSeconds);
-
     // Explicit one-shot pose initialization, only while Disabled and while a
     // fresh, vetted raw pose is available. Never auto-reset during a match.
-    if (SmartDashboard.getBoolean("Vision Reset Pose Request", false)) {
+    if (m_visionResetEntry.getBoolean(false)) {
       if (DriverStation.isDisabled() && poseFresh && m_lastRawVisionPose != null) {
         m_robotDrive.resetOdometry(m_lastRawVisionPose);
-        SmartDashboard.putString("Vision Reset Status", "Applied while Disabled");
+        m_visionResetStatus = "Applied while Disabled";
       } else {
-        SmartDashboard.putString("Vision Reset Status", "Rejected: Disable and show a valid tag");
+        m_visionResetStatus = "Rejected: Disable and show a valid tag";
       }
-      SmartDashboard.putBoolean("Vision Reset Pose Request", false);
+      m_visionResetEntry.setBoolean(false);
     }
   }
 
@@ -323,13 +324,11 @@ public class RobotContainer {
   /** Toggle between robot-relative and field-relative translation control. */
   private void toggleFieldRelative() {
     m_fieldRelativeEnabled = !m_fieldRelativeEnabled;
-    SmartDashboard.putBoolean("Field Relative Enabled", m_fieldRelativeEnabled);
   }
 
   /** Toggle PhotonVision AprilTag auto-alignment on/off. */
   private void toggleVisionAlign() {
     m_visionAlignEnabled = !m_visionAlignEnabled;
-    SmartDashboard.putBoolean("Vision Align Enabled", m_visionAlignEnabled);
   }
 
   /**
@@ -369,13 +368,19 @@ public class RobotContainer {
             m_robotDrive));
   }
 
-  /** Publishes dashboard-only state that is not owned by a subsystem. */
+  /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
   public void updateDashboard() {
     updateVisionTarget();
-    Command selectedAuto = m_autoChooser.getSelected();
-    SmartDashboard.putString(
-        "Selected Auto",
-        selectedAuto != null ? selectedAuto.getName() : "None");
+  }
+
+  private double getVisionPoseAgeSeconds() {
+    return m_lastVisionPoseReceivedAt < 0.0 ? -1.0
+        : Timer.getFPGATimestamp() - m_lastVisionPoseReceivedAt;
+  }
+
+  private boolean isVisionPoseFresh() {
+    double age = getVisionPoseAgeSeconds();
+    return age >= 0.0 && age <= 0.5;
   }
 
   /**
