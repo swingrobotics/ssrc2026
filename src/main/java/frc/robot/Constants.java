@@ -115,6 +115,24 @@ public final class Constants {
     public static final double kFreeSpeedRpm = 5676;
   }
 
+
+  /**
+   * Two Spark MAX / original NEO intake rollers.
+   *
+   * Assign TWO unique CAN IDs before enabling. -1 deliberately prevents motor
+   * initialization, so an unfinished configuration cannot claim another device.
+   */
+  public static final class IntakeConstants {
+    public static final int UNASSIGNED_CAN_ID = -1;
+    public static final int LEFT_CAN_ID = UNASSIGNED_CAN_ID;
+    public static final int RIGHT_CAN_ID = UNASSIGNED_CAN_ID;
+
+    // Conservative first-power-on limits; tune only after confirming roller direction.
+    public static final int CURRENT_LIMIT_AMPS = 20;
+    public static final double MAX_OUTPUT = 0.25;
+    public static final double DEFAULT_OUTPUT = 0.20;
+  }
+
   // Mechanism constants from FRC_Drive_Shooter_Merged.zip.
   public static final class ShooterConstants {
     public static final int SHOOTER_9_ID = 9;
