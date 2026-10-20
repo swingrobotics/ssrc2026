@@ -13,6 +13,8 @@ import com.revrobotics.spark.config.SparkMaxConfig;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
+import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.ShooterConstants;
 
@@ -70,6 +72,18 @@ public class ShooterSubsystem extends SubsystemBase {
         PersistMode.kPersistParameters);
 
     stopShooter();
+
+    // SmartDashboard topics do not automatically appear as tiles on the
+    // Shuffleboard Drive tab. Publish live suppliers on a dedicated tab.
+    ShuffleboardTab shooterTab = Shuffleboard.getTab("Shooter");
+    shooterTab.addDouble("Target RPM", this::getTargetRPM);
+    shooterTab.addDouble("Actual RPM", this::getActualRPM);
+    shooterTab.addDouble("Error RPM", this::getErrorRPM);
+    shooterTab.addDouble("Motor 10 RPM", this::getMotor10RPM);
+    shooterTab.addDouble("Motor 12 RPM", this::getMotor12RPM);
+    shooterTab.addBoolean("At Target RPM", this::isAtSpeed);
+    shooterTab.addBoolean("Running", () -> targetRPM > 0.0);
+
     publishTelemetry();
   }
 
@@ -109,6 +123,19 @@ public class ShooterSubsystem extends SubsystemBase {
     return targetRPM;
   }
 
+  public double getErrorRPM() {
+    double actualRPM = getActualRPM();
+    return Double.isFinite(actualRPM) ? targetRPM - actualRPM : 0.0;
+  }
+
+  public double getMotor10RPM() {
+    return shooter10Encoder.getVelocity() * ShooterConstants.MOTOR_DIRECTION;
+  }
+
+  public double getMotor12RPM() {
+    return -shooter12Encoder.getVelocity() * ShooterConstants.MOTOR_DIRECTION;
+  }
+
   /** Ready after stable leader RPM; this does NOT yet gate the feeder. */
   public boolean isAtSpeed() {
     return targetRPM > 0.0
@@ -144,12 +171,9 @@ public class ShooterSubsystem extends SubsystemBase {
     double actualRPM = getActualRPM();
     SmartDashboard.putNumber("Shooter Target RPM", targetRPM);
     SmartDashboard.putNumber("Shooter Actual RPM", actualRPM);
-    SmartDashboard.putNumber("Shooter Error RPM",
-        Double.isFinite(actualRPM) ? targetRPM - actualRPM : 0.0);
-    SmartDashboard.putNumber("Shooter Motor 10 RPM",
-        shooter10Encoder.getVelocity() * ShooterConstants.MOTOR_DIRECTION);
-    SmartDashboard.putNumber("Shooter Motor 12 RPM",
-        -shooter12Encoder.getVelocity() * ShooterConstants.MOTOR_DIRECTION);
+    SmartDashboard.putNumber("Shooter Error RPM", getErrorRPM());
+    SmartDashboard.putNumber("Shooter Motor 10 RPM", getMotor10RPM());
+    SmartDashboard.putNumber("Shooter Motor 12 RPM", getMotor12RPM());
     SmartDashboard.putBoolean("Shooter Running", targetRPM > 0.0);
     SmartDashboard.putBoolean("Shooter At Target RPM", isAtSpeed());
   }
