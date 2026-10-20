@@ -52,7 +52,8 @@ public class RobotContainer {
   // The original swerve/vision/autonomous subsystem, plus the ZIP's mechanism subsystems.
   private final DriveSubsystem m_robotDrive = new DriveSubsystem();
   private final ShooterSubsystem m_shooter = new ShooterSubsystem();
-  private final FeederSubsystem m_feeder = new FeederSubsystem();
+  // Feed only when the shooter leader has reached its target RPM.
+  private final FeederSubsystem m_feeder = new FeederSubsystem(m_shooter::isAtSpeed);
   private final HoodSubsystem m_hood = new HoodSubsystem();
   // Creates no motor controllers until both intake CAN IDs are assigned.
   private final IntakeSubsystem m_intake = new IntakeSubsystem();
@@ -113,6 +114,9 @@ public class RobotContainer {
     driveTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM);
     driveTab.addDouble("Shooter Error RPM", m_shooter::getErrorRPM);
     driveTab.addBoolean("Shooter RPM Ready", m_shooter::isAtSpeed);
+    driveTab.addBoolean("Feeder Allowed", m_feeder::isFeedAllowed);
+    driveTab.addBoolean("Feeder Command Active", m_feeder::isFeeding);
+    driveTab.addBoolean("Feeder A Requested", m_driverController::getAButton);
     m_feederSpeedEntry = driveTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
@@ -348,7 +352,8 @@ public class RobotContainer {
    * Use this method to define your button->command mappings.
    */
   private void configureButtonBindings() {
-    // ZIP mapping takes precedence: A holds Feeder; releasing A stops it.
+    // Hold A to request feeding; FeederSubsystem allows output only while
+    // the shooter is at RPM. Losing speed or releasing A stops the feeder.
     new JoystickButton(m_driverController, XboxController.Button.kA.value)
         .whileTrue(Commands.runEnd(
             () -> m_feeder.runFeeder(getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent)),
