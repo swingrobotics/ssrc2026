@@ -365,6 +365,15 @@ public class RobotContainer {
             () -> m_robotDrive.setX(),
             m_robotDrive));
 
+
+                // Hold LB to run the intake; release to stop.
+    new JoystickButton(m_driverController, XboxController.Button.kLeftBumper.value)
+        .whileTrue(Commands.runEnd(
+            m_intake::runIntake,
+            m_intake::stopIntake,
+            m_intake));
+
+            
     new JoystickButton(m_driverController, XboxController.Button.kStart.value)
         .onTrue(new InstantCommand(
             () -> m_robotDrive.zeroHeading(),
