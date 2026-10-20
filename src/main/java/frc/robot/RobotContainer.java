@@ -109,6 +109,10 @@ public class RobotContainer {
     m_shooterSpeedEntry = driveTab.add("Shooter Target RPM", kDefaultShooterRpm)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", ShooterConstants.MAX_RPM)).getEntry();
+    // Keep essential live shooter status on the driver tab, too.
+    driveTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM);
+    driveTab.addDouble("Shooter Error RPM", m_shooter::getErrorRPM);
+    driveTab.addBoolean("Shooter RPM Ready", m_shooter::isAtSpeed);
     m_feederSpeedEntry = driveTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
