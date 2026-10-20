@@ -138,7 +138,21 @@ public final class Constants {
     public static final int SHOOTER_9_ID = 9;
     public static final int SHOOTER_10_ID = 10;
     public static final int SHOOTER_12_ID = 12;
-    public static final double TEST_SPEED = -0.50;
+
+    // Test values, NOT measured match-ready shot settings.
+    // Motor 9 was previously driven with negative duty cycle.
+    public static final double MOTOR_DIRECTION = -1.0;
+    public static final double DEFAULT_RPM = 1500.0;
+    public static final double MAX_RPM = 3000.0;
+    public static final double RPM_TOLERANCE = 150.0;
+    public static final int READY_STABLE_CYCLES = 5; // five 20 ms loops
+    public static final int CURRENT_LIMIT_AMPS = 20;
+    public static final double MAX_MOTOR_OUTPUT = 0.75;
+
+    // Initial velocity tuning only. Verify with actual telemetry.
+    public static final double VELOCITY_KP = 0.0001;
+    // REV 2026 kV units: volts per (motor shaft) RPM.
+    public static final double VELOCITY_KV = 12.0 / NeoMotorConstants.kFreeSpeedRpm;
   }
 
   public static final class FeederConstants {
