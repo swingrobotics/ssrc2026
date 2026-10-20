@@ -46,7 +46,7 @@ import java.util.Optional;
  */
 public class RobotContainer {
   private static final double kDefaultDrivePercent = 100.0;
-  private static final double kDefaultShooterPercent = Math.abs(ShooterConstants.TEST_SPEED) * 100.0;
+  private static final double kDefaultShooterRpm = ShooterConstants.DEFAULT_RPM;
   private static final double kDefaultFeederPercent = Math.abs(FeederConstants.TEST_SPEED) * 100.0;
 
   // The original swerve/vision/autonomous subsystem, plus the ZIP's mechanism subsystems.
@@ -106,9 +106,9 @@ public class RobotContainer {
     m_driveSpeedEntry = driveTab.add("Drive Speed (%)", kDefaultDrivePercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
-    m_shooterSpeedEntry = driveTab.add("Shooter Speed (%)", kDefaultShooterPercent)
+    m_shooterSpeedEntry = driveTab.add("Shooter Target RPM", kDefaultShooterRpm)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
+        .withProperties(Map.of("min", 0.0, "max", ShooterConstants.MAX_RPM)).getEntry();
     m_feederSpeedEntry = driveTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
@@ -181,6 +181,12 @@ public class RobotContainer {
   private static double getOutputScale(GenericEntry entry, double defaultPercent) {
     double percent = entry.getDouble(defaultPercent);
     return Double.isFinite(percent) ? MathUtil.clamp(percent, 0.0, 100.0) / 100.0 : 0.0;
+  }
+
+  /** Read a safe, non-negative motor RPM request from the shooter slider. */
+  private static double getShooterTargetRPM(GenericEntry entry) {
+    double rpm = entry.getDouble(kDefaultShooterRpm);
+    return Double.isFinite(rpm) ? MathUtil.clamp(rpm, 0.0, ShooterConstants.MAX_RPM) : 0.0;
   }
 
   /**
@@ -345,10 +351,11 @@ public class RobotContainer {
             m_feeder::stopFeeder,
             m_feeder));
 
-    // ZIP mapping takes precedence: B holds Shooter; preserve negative output direction.
+    // Hold B for Spark MAX velocity control. Negative shaft direction is
+    // preserved inside ShooterSubsystem; release/interruption stops the flywheels.
     new JoystickButton(m_driverController, XboxController.Button.kB.value)
         .whileTrue(Commands.runEnd(
-            () -> m_shooter.runShooter(-getOutputScale(m_shooterSpeedEntry, kDefaultShooterPercent)),
+            () -> m_shooter.setTargetRPM(getShooterTargetRPM(m_shooterSpeedEntry)),
             m_shooter::stopShooter,
             m_shooter));
 
