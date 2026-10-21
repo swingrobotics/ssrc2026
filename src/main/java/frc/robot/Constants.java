@@ -162,19 +162,9 @@ public final class Constants {
     // Original 50% driver-controlled duty cycle. Manual/uncalibrated auto
     // operation uses this, never an RPM-to-percent conversion.
     public static final double DEFAULT_OUTPUT_PERCENT = 50.0;
-    // Safety limit for opt-in fixed motor-shaft RPM testing. This is NOT a
-    // measured match-ready shooting speed; choose the actual target from
-    // supervised robot measurements in Shuffleboard.
-    public static final double MAX_RPM = 3000.0;
-    public static final double RPM_TOLERANCE = 150.0;
-    public static final int READY_STABLE_CYCLES = 5; // five 20 ms loops
+    // Only direct duty-cycle output control; no RPM targets or tuning.
     public static final int CURRENT_LIMIT_AMPS = 20;
     public static final double MAX_MOTOR_OUTPUT = 0.75;
-
-    // Initial velocity tuning only. Verify with actual telemetry.
-    public static final double VELOCITY_KP = 0.0001;
-    // REV 2026 kV units: volts per (motor shaft) RPM.
-    public static final double VELOCITY_KV = 12.0 / NeoMotorConstants.kFreeSpeedRpm;
   }
 
   public static final class FeederConstants {
