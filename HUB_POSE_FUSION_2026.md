@@ -83,6 +83,35 @@ These are essential interlocks, not optional tuning steps:
 pose not initialized, camera vision stale, alliance unknown,
 invalid position or HUB too close.
 
+### If 2-3 AprilTags are visible but `Pose Solver` says SingleTag
+
+PhotonVision documentation: `estimateCoprocMultiTagPose(result)` needs a
+**coprocessor MultiTag result**, not merely multiple target detections.
+The robot reports this distinction directly on the `Vision` dashboard:
+
+1. `Raw Detected Tag Count`: number of targets in the latest camera frame.
+2. `Raw Coproc MultiTag Present`: whether PhotonVision transmitted
+   `result.getMultiTagResult()`; if false despite 2-3 targets, check
+   3D calibration, Output -> Do Multi-Target Estimation, tag IDs, and
+   exact same field JSON on the camera and robot (2026 Welded/AndyMark).
+3. `PhotonPose MultiTag Solved`: whether PhotonLib
+   `estimateCoprocMultiTagPose(result)` returned a robot pose. If a raw
+   MultiTag result is present but this is false, inspect RobotToCamera,
+   version compatibility and the pose estimator rather than retuning PID.
+4. `Pose Solver`: reports MultiTag only when the robot estimator actually
+   returned a multi-tag pose; otherwise falls back to SingleTag.
+5. `Pose Avg Tag Range (m)`: now calculated using global positions of
+   known fiducials and the field camera pose, not the individual target
+   `bestCameraToTarget` transform, which PhotonVision can omit during
+   MultiTag unless Always Do Single-Target Estimation is enabled.
+6. `Vision Gate Status`: details whether a solved MultiTag pose passed
+   the physical pose/range/gyro checks. A valid MultiTag result is not
+   guaranteed to pass every verification gate.
+
+Do NOT turn on `Field Camera Verified` unless the layout and physical
+mount/extrinsics have been checked. Multiple randomly placed practice
+AprilTags are insufficient for official global field localization.
+
 ### If X is pressed but chassis does not rotate
 
 On the `Vision` tab inspect these in order:
