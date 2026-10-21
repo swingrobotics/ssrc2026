@@ -83,6 +83,30 @@ These are essential interlocks, not optional tuning steps:
 pose not initialized, camera vision stale, alliance unknown,
 invalid position or HUB too close.
 
+### If X is pressed but chassis does not rotate
+
+On the `Vision` tab inspect these in order:
+1. `HUB X Button Pressed`: true **while holding X** proves controller mapping.
+2. `HUB Align Requested`: true **after one press** proves the toggle fired.
+3. `HUB Teleop Enabled`: must be true; Disabled and autonomous do not
+   execute the manual drive/default HUB heading controller.
+4. `HUB Turn Blocker`: displays the first unmet interlock. Do not disable
+   interlocks just to make wheels move.
+5. `HUB Turn Command (%)`: nonzero means aim computes a rotation command.
+   If it is nonzero and chassis remains still, check drive speed percentage,
+   manual trigger turn, swerve wheel steering/motor state and driver station
+   output, with wheels safely elevated under team supervision.
+6. `HUB Error (deg)`: may be near zero if already aligned, where 0% is
+   expected. If camera localization is wrong, do not use trim as a fix.
+7. `Vision Gate Status`: rejected PnP frames prevent fusion. For any
+   stop status check field JSON, camera extrinsics, tag distances, navX.
+8. `Pose Init Status`: first global pose requires a fresh multitag
+   solution, camera verification, and one disabled-only Reset Pose toggle.
+   Start-button navX zeroing is NOT field-pose initialization.
+
+`HUB Turn Command (%)` measures the normalised HUB controller output
+before the independent Drive Speed (%) scaling, not measured wheel rotation.
+
 ## Tests
 
 Run from project root in the 2026 WPILib VS Code environment:
