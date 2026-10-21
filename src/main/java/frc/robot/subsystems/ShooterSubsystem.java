@@ -19,7 +19,8 @@ import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.ShooterConstants;
 
 /**
- * RPM-based velocity control for shooter motor 9 (leader).
+ * Dual-mode control for shooter motor 9 (leader): driver percent output
+ * and optional closed-loop velocity RPM for measured distance calibration.
  * Motors 10 and 12 retain their existing hardware follower relationships:
  * 10 follows the leader, 12 follows in the opposite direction.
  *
@@ -41,7 +42,11 @@ public class ShooterSubsystem extends SubsystemBase {
   private final RelativeEncoder shooter10Encoder = shooter10.getEncoder();
   private final RelativeEncoder shooter12Encoder = shooter12.getEncoder();
 
+  private enum ControlMode { STOPPED, PERCENT, RPM }
+
+  private ControlMode mode = ControlMode.STOPPED;
   private double targetRPM = 0.0;
+  private double commandedOutputPercent = 0.0;
   private int stableCycles = 0;
 
   public ShooterSubsystem() {
@@ -76,20 +81,45 @@ public class ShooterSubsystem extends SubsystemBase {
     // SmartDashboard topics do not automatically appear as tiles on the
     // Shuffleboard Drive tab. Publish live suppliers on a dedicated tab.
     ShuffleboardTab shooterTab = Shuffleboard.getTab("Shooter");
+    shooterTab.addString("Control Mode", this::getControlMode);
+    shooterTab.addDouble("Command Output (%)", this::getOutputPercent);
     shooterTab.addDouble("Target RPM", this::getTargetRPM);
     shooterTab.addDouble("Actual RPM", this::getActualRPM);
     shooterTab.addDouble("Error RPM", this::getErrorRPM);
     shooterTab.addDouble("Motor 10 RPM", this::getMotor10RPM);
     shooterTab.addDouble("Motor 12 RPM", this::getMotor12RPM);
     shooterTab.addBoolean("At Target RPM", this::isAtSpeed);
-    shooterTab.addBoolean("Running", () -> targetRPM > 0.0);
+    shooterTab.addBoolean("Running", this::isRunning);
 
     publishTelemetry();
   }
 
   /**
-   * Run the shooter at an absolute motor RPM setpoint. Negative motor rotation
-   * from the original open-loop setup is retained using MOTOR_DIRECTION.
+   * Original operator mode: output is a genuine motor duty-cycle percentage,
+   * not an RPM converted into a percentage. A request of 50 means -0.50 to
+   * the leader, matching the team's original shooting direction.
+   * Clamped to the existing 75% output cap.
+   */
+  public void setOutputPercent(double requestedPercent) {
+    if (DriverStation.isDisabled()
+        || !Double.isFinite(requestedPercent)
+        || requestedPercent <= 0.0) {
+      stopShooter();
+      return;
+    }
+
+    double percent = MathUtil.clamp(requestedPercent, 0.0,
+        ShooterConstants.MAX_MOTOR_OUTPUT * 100.0);
+    mode = ControlMode.PERCENT;
+    targetRPM = 0.0;
+    stableCycles = 0;
+    commandedOutputPercent = percent;
+    shooter9.set(ShooterConstants.MOTOR_DIRECTION * percent / 100.0);
+  }
+
+  /**
+   * Optional closed-loop motor-shaft RPM mode for calibrated shots.
+   * Negative motor rotation from the original setup is preserved.
    * Invalid, zero or disabled requests stop the mechanism.
    */
   public void setTargetRPM(double requestedRPM) {
@@ -101,9 +131,11 @@ public class ShooterSubsystem extends SubsystemBase {
     }
 
     double safeRPM = MathUtil.clamp(requestedRPM, 0.0, ShooterConstants.MAX_RPM);
-    if (Math.abs(safeRPM - targetRPM) > 0.01) {
+    if (mode != ControlMode.RPM || Math.abs(safeRPM - targetRPM) > 0.01) {
       stableCycles = 0;
     }
+    mode = ControlMode.RPM;
+    commandedOutputPercent = 0.0;
     targetRPM = safeRPM;
     velocityController.setSetpoint(
         ShooterConstants.MOTOR_DIRECTION * targetRPM,
@@ -111,7 +143,20 @@ public class ShooterSubsystem extends SubsystemBase {
   }
 
   public void runShooter() {
-    setTargetRPM(ShooterConstants.DEFAULT_RPM);
+    setOutputPercent(ShooterConstants.DEFAULT_OUTPUT_PERCENT);
+  }
+
+  public String getControlMode() {
+    return mode.name();
+  }
+
+  /** Percent of full motor-controller output, not percent of target RPM. */
+  public double getOutputPercent() {
+    return commandedOutputPercent;
+  }
+
+  public boolean isRunning() {
+    return mode != ControlMode.STOPPED;
   }
 
   /** Actual leader shaft RPM, positive in the team's normal shooting direction. */
@@ -138,25 +183,27 @@ public class ShooterSubsystem extends SubsystemBase {
 
   /** Ready after stable leader RPM; this does NOT yet gate the feeder. */
   public boolean isAtSpeed() {
-    return targetRPM > 0.0
+    return mode == ControlMode.RPM && targetRPM > 0.0
         && stableCycles >= ShooterConstants.READY_STABLE_CYCLES;
   }
 
   /** Stop the leader; its two hardware followers will stop with it. */
   public void stopShooter() {
+    mode = ControlMode.STOPPED;
     targetRPM = 0.0;
+    commandedOutputPercent = 0.0;
     stableCycles = 0;
     shooter9.stopMotor();
   }
 
   @Override
   public void periodic() {
-    if (DriverStation.isDisabled() && targetRPM > 0.0) {
+    if (DriverStation.isDisabled() && isRunning()) {
       stopShooter();
     }
 
     double actualRPM = getActualRPM();
-    if (targetRPM > 0.0
+    if (mode == ControlMode.RPM && targetRPM > 0.0
         && Double.isFinite(actualRPM)
         && Math.abs(targetRPM - actualRPM) <= ShooterConstants.RPM_TOLERANCE) {
       stableCycles = Math.min(
@@ -169,12 +216,14 @@ public class ShooterSubsystem extends SubsystemBase {
 
   private void publishTelemetry() {
     double actualRPM = getActualRPM();
+    SmartDashboard.putString("Shooter Control Mode", getControlMode());
+    SmartDashboard.putNumber("Shooter Command Output (%)", getOutputPercent());
     SmartDashboard.putNumber("Shooter Target RPM", targetRPM);
     SmartDashboard.putNumber("Shooter Actual RPM", actualRPM);
     SmartDashboard.putNumber("Shooter Error RPM", getErrorRPM());
     SmartDashboard.putNumber("Shooter Motor 10 RPM", getMotor10RPM());
     SmartDashboard.putNumber("Shooter Motor 12 RPM", getMotor12RPM());
-    SmartDashboard.putBoolean("Shooter Running", targetRPM > 0.0);
+    SmartDashboard.putBoolean("Shooter Running", isRunning());
     SmartDashboard.putBoolean("Shooter At Target RPM", isAtSpeed());
   }
 }
