@@ -3,6 +3,28 @@
 Working reference: `intake-subsystem` branch. This file is the team's
 persistent checklist, not a claim of match-readiness.
 
+## Intake arm rack-and-pinion control — manual D-pad mapping (not tested)
+- [x] Add dedicated `IntakeArmSubsystem` independent of intake rollers and
+      shooter-side feeder, assuming REV brushless NEO + SPARK MAX from photo.
+- [x] Xbox D-pad/POV UP (0 deg): positive output / intake arm forward;
+      DOWN (180 deg): negative output / intake arm backward; release: stop.
+- [x] Default CAN ID = -1. No motor is instantiated until the actual,
+      non-conflicting arm controller CAN ID (15-62) is assigned.
+- [x] Apply brake idle mode, 10 A current limit, low 8% test output,
+      10% software output cap and a 1.5 second continuous-movement timeout.
+- [x] Provide an `Intake Arm` Shuffleboard tab with config, commanded
+      output, motor-relative encoder revolutions, current and timeout.
+- [ ] Get confirmed SPARK MAX CAN ID and confirm motor type/wiring.
+- [ ] Verify D-pad directions and invert `MOTOR_DIRECTION` if necessary.
+- [ ] Confirm rack travel bounds and whether hard limit switches, absolute
+      arm encoder or other position reference is installed.
+- [ ] Add homing + software limits and/or hardware limits BEFORE attempting
+      automated extension/retraction or closed-loop position hold.
+- [ ] Supervised physical test to ensure no travel-stop collision/stall.
+- [ ] Only after safe arm positions are calibrated, add PathPlanner named
+      arm extend/retract commands. Current D-pad-only code never auto-moves.
+- [ ] Build, deploy and test on WPILib 2026 computer/robot.
+
 ## Shooter-side feeder available — autonomous feeding added, not field-tested
 - [x] Correction from team: shooter-side feeder WORKS; only the
       INTAKE-SIDE feeder / intake transport is unfinished.
