@@ -160,7 +160,9 @@ public final class HubCenterAlign {
 
     if (inTolerance) {
       if (stableSince < 0.0) stableSince = Timer.getFPGATimestamp();
-      status = isAligned() ? "ALIGNED" : "SETTLING";
+      status = (stableSince >= 0.0
+          && Timer.getFPGATimestamp() - stableSince >= STABLE_SECONDS)
+              ? "ALIGNED" : "SETTLING";
       // PID goal is retained; zero velocity removes micro-oscillation when
       // the robot has already settled.
       return 0.0;
