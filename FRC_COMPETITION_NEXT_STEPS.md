@@ -116,6 +116,37 @@ persistent checklist, not a claim of match-readiness.
 - [ ] Stage 2: derive distance from field pose and verified HUB center,
       then make distance-source selection manual / vision; NOT implemented yet.
 
+## PathPlanner stationary-shot interlock — code added, untested
+- [x] `Auto Shoot` requires the DriveSubsystem and requests zero
+      robot-relative chassis speed throughout its wait/feed phase.
+- [x] Measure translational chassis speed from swerve module states;
+      require <= 0.10 m/s, rotational speed <= 0.15 rad/s (~8.6 deg/s)
+      continuously for 0.25 s, with 1.5 s stop timeout.
+- [x] Abort the feed if the robot never settles in time.
+- [x] Once stopped, wait up to 2 s for motor/hood readiness.
+      Percent mode verifies settled shaft RPM and hood hold status;
+      calibrated mode verifies target motor RPM and hood position.
+- [x] Check stop and shooter/hood interlocks continuously DURING feeding,
+      and stop immediately on lost readiness or disabled/disarmed state.
+- [x] Keep feeder on only for bounded `Autonomous Feed Duration (s)`,
+      then stop and pause 0.15 s before ending the command.
+- [x] Avoid joystick commands acting on the drivetrain between auto paths.
+- [x] Publish measured robot linear/angular speed, stopped flag and last
+      autonomous shot outcome in Shuffleboard `Shot Tuning`.
+- [ ] Confirm the stationary-speed thresholds from REAL robot telemetry,
+      because wheel slip/encoder errors can affect odometry-derived velocity.
+- [ ] Verify `shoot 1` / `shoot 2` Goal End Velocity = 0 m/s; place
+      `Auto Shoot` as a SEQUENTIAL COMMAND BETWEEN paths. Do NOT use it as a
+      while-driving PathPlanner Event Marker: it requires DriveSubsystem.
+- [ ] Confirm abort conditions: motion during feed, disabled, feeder disarm,
+      shooter RPM drop, hood encoder failure, early auto cancellation.
+- [ ] Test whether 1.5 s stop timeout + 2 s spin-up timeout + 2 s
+      maximum feed + path travel still fits the 20-second autonomous.
+- [ ] No fuel exit sensor is wired: `FEED TIMER COMPLETE` does NOT verify
+      all fuel was actually launched; add a sensor if completion matters.
+- [ ] Confirm actual HUB aim and firing-angle calibration separately.
+- [ ] Build and supervised-test on physical robot; no success claimed.
+
 ## PathPlanner autonomous shooter sequence (added; not yet tested)
 - [x] Register `Auto Shooter Start`, `Auto Shoot`, and `Auto Shooter Stop`
       as PathPlanner Named Commands BEFORE building the auto chooser.
