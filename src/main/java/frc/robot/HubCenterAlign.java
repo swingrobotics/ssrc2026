@@ -34,11 +34,31 @@ public final class HubCenterAlign {
   private static final double MAX_STABLE_ROTATION_RAD_PER_SEC = 0.12;
   private static final double ALIGN_STABLE_SECONDS = 0.20;
 
+  // MultiTag PnP can jump when the set of visible tags changes.
+  // Filter legitimate pose updates and reject discontinuities first.
+  private static final double POSITION_FILTER_ALPHA = 0.25;
+  private static final double GYRO_FIELD_OFFSET_ALPHA = 0.12;
+  private static final double MAX_POSITION_STEP_BASE_METERS = 0.30;
+  private static final double MAX_POSITION_STEP_METERS_PER_SECOND = 2.0;
+  private static final double MAX_HEADING_INNOVATION_RADIANS = Math.toRadians(18.0);
+  // Once aligned, a wider band prevents pose noise from restarting turns.
+  private static final double ALIGNED_HYSTERESIS_RADIANS = Math.toRadians(3.0);
+  // Slew-limit valid turn commands to avoid abrupt reversals.
+  private static final double MAX_TURN_COMMAND_CHANGE_PER_SECOND = 1.5;
+
   private Pose2d lastVisionPose = null;
   private Alliance visionAlliance = null;
   private double visionTimestampSeconds = -1.0;
-  private double gyroAtVisionRadians = Double.NaN;
+  // Gyro heading is the fast, stable heading reference. The vision pose
+  // supplies a slowly corrected transform from gyro-yaw to field heading.
+  private double gyroToFieldOffsetRadians = Double.NaN;
   private int hubTags = 0;
+  private int rejectedPoseUpdates = 0;
+  private double lastPoseJumpMeters = Double.NaN;
+  private double lastHeadingInnovationDegrees = Double.NaN;
+  private String visionFilterStatus = "WAITING FOR FIRST MULTITAG POSE";
+  private double lastTurnCommand = 0.0;
+  private double lastTurnCommandTime = -1.0;
   private double headingErrorDegrees = Double.NaN;
   private double untrimmedHeadingErrorDegrees = Double.NaN;
   private double estimatedHeadingDegrees = Double.NaN;
@@ -83,10 +103,17 @@ public final class HubCenterAlign {
         bearingRadians - launcherYawOffsetRadians + Math.toRadians(trimDegrees));
   }
 
-  /** Receive an already-vetted multi-tag pose from RobotContainer. */
+  /**
+   * Accept a PhotonVision multi-tag field pose. Keep the navX heading as the
+   * fast heading reference; use camera heading only to slowly establish its
+   * field-frame offset. Reject sudden tag-set-switch pose discontinuities.
+   *
+   * gyroDegrees and angularRateRadPerSec are CURRENT robot readings; frame
+   * gyro yaw is back-predicted by the known camera timestamp lag.
+   */
   public void acceptVision(
       Pose2d fieldPose, double timestampSeconds, double gyroDegrees,
-      Alliance alliance, int uniqueHubTags) {
+      double angularRateRadPerSec, Alliance alliance, int uniqueHubTags) {
     double now = Timer.getFPGATimestamp();
     if (fieldPose == null || alliance == null || uniqueHubTags < 2
         || !Double.isFinite(timestampSeconds)
@@ -94,18 +121,59 @@ public final class HubCenterAlign {
         || timestampSeconds > now + 0.05
         || now - timestampSeconds > POSE_TIMEOUT_SECONDS
         || !Double.isFinite(gyroDegrees)
+        || !Double.isFinite(angularRateRadPerSec)
         || !Double.isFinite(fieldPose.getX())
         || !Double.isFinite(fieldPose.getY())
         || !Double.isFinite(fieldPose.getRotation().getRadians())) {
       return;
     }
-    if (alliance != visionAlliance) {
+
+    double captureAge = Math.max(0.0, now - timestampSeconds);
+    // Approximate gyro yaw when the camera took this image, not when it arrived.
+    double gyroAtExposure = MathUtil.angleModulus(
+        Math.toRadians(gyroDegrees) - angularRateRadPerSec * captureAge);
+    double measuredFieldOffset = MathUtil.angleModulus(
+        fieldPose.getRotation().getRadians() - gyroAtExposure);
+
+    if (lastVisionPose == null || visionAlliance != alliance
+        || !Double.isFinite(gyroToFieldOffsetRadians)) {
+      lastVisionPose = fieldPose;
+      gyroToFieldOffsetRadians = measuredFieldOffset;
+      visionAlliance = alliance;
       stableSinceSeconds = -1.0;
+      visionFilterStatus = "INITIALIZED MULTITAG FIELD POSE";
+    } else {
+      double elapsed = Math.max(0.0, timestampSeconds - visionTimestampSeconds);
+      double positionStep = fieldPose.getTranslation().getDistance(
+          lastVisionPose.getTranslation());
+      double headingInnovation = MathUtil.angleModulus(
+          measuredFieldOffset - gyroToFieldOffsetRadians);
+      lastPoseJumpMeters = positionStep;
+      lastHeadingInnovationDegrees = Math.toDegrees(headingInnovation);
+
+      double maxReasonableStep = MAX_POSITION_STEP_BASE_METERS
+          + MAX_POSITION_STEP_METERS_PER_SECOND * elapsed;
+      if (positionStep > maxReasonableStep
+          || Math.abs(headingInnovation) > MAX_HEADING_INNOVATION_RADIANS) {
+        rejectedPoseUpdates++;
+        visionFilterStatus = "REJECTED MULTITAG POSE JUMP";
+        // Do not refresh the last valid pose timestamp on an outlier.
+        // Rotation will stop after POSE_TIMEOUT_SECONDS without clean data.
+        return;
+      }
+
+      Translation2d smoothed = lastVisionPose.getTranslation().plus(
+          fieldPose.getTranslation().minus(lastVisionPose.getTranslation())
+              .times(POSITION_FILTER_ALPHA));
+      double fieldHeadingOffset = MathUtil.angleModulus(
+          gyroToFieldOffsetRadians
+              + GYRO_FIELD_OFFSET_ALPHA * headingInnovation);
+      lastVisionPose = new Pose2d(smoothed, fieldPose.getRotation());
+      gyroToFieldOffsetRadians = fieldHeadingOffset;
+      visionFilterStatus = "FILTERED MULTITAG POSE";
     }
-    lastVisionPose = fieldPose;
-    visionAlliance = alliance;
+
     visionTimestampSeconds = timestampSeconds;
-    gyroAtVisionRadians = Math.toRadians(gyroDegrees);
     hubTags = uniqueHubTags;
   }
 
@@ -123,7 +191,7 @@ public final class HubCenterAlign {
     if (!hasFreshPose(alliance)
         || !Double.isFinite(gyroDegrees)
         || !Double.isFinite(angularRateRadPerSec)
-        || !Double.isFinite(gyroAtVisionRadians)) {
+        || !Double.isFinite(gyroToFieldOffsetRadians)) {
       headingErrorDegrees = Double.NaN;
       untrimmedHeadingErrorDegrees = Double.NaN;
       estimatedHeadingDegrees = Double.NaN;
@@ -132,14 +200,16 @@ public final class HubCenterAlign {
       hubDistanceMeters = Double.NaN;
       stableSinceSeconds = -1.0;
       status = "NO FRESH MULTI-HUB-TAG POSE";
+      lastTurnCommand = 0.0;
+      lastTurnCommandTime = -1.0;
       return 0.0;
     }
 
-    // Compensate rotation since camera capture using the robot gyro.
-    double rotationDelta = MathUtil.angleModulus(
-        Math.toRadians(gyroDegrees) - gyroAtVisionRadians);
+    // Fast continuous gyro yaw + low-noise field-frame offset.
+    // Unlike raw camera yaw, this heading does not jump every time a third
+    // visible tag changes the coprocessor's PnP solution.
     double estimatedHeading = MathUtil.angleModulus(
-        lastVisionPose.getRotation().getRadians() + rotationDelta);
+        Math.toRadians(gyroDegrees) + gyroToFieldOffsetRadians);
 
     Translation2d launcher = lastVisionPose.getTranslation().plus(
         HubConstants.SHOOTER_OFFSET_ROBOT_METERS.rotateBy(
@@ -170,21 +240,37 @@ public final class HubCenterAlign {
         MathUtil.angleModulus(untrimmedTarget - estimatedHeading));
     headingErrorDegrees = Math.toDegrees(errorRadians);
 
-    if (Math.abs(errorRadians) <= HEADING_TOLERANCE_RADIANS
-        && Math.abs(angularRateRadPerSec) <= MAX_STABLE_ROTATION_RAD_PER_SEC) {
+    // Hysteresis: after settling, ignore small target bearing fluctuations
+    // instead of commanding clockwise/counterclockwise alternation.
+    if ((stableSinceSeconds >= 0.0
+            && Math.abs(errorRadians) <= ALIGNED_HYSTERESIS_RADIANS)
+        || (Math.abs(errorRadians) <= HEADING_TOLERANCE_RADIANS
+            && Math.abs(angularRateRadPerSec) <= MAX_STABLE_ROTATION_RAD_PER_SEC)) {
       if (stableSinceSeconds < 0.0) {
         stableSinceSeconds = Timer.getFPGATimestamp();
       }
       status = isAligned(alliance) ? "ALIGNED" : "SETTLING";
+      lastTurnCommand = 0.0;
+      lastTurnCommandTime = -1.0;
       return 0.0;
     }
 
     stableSinceSeconds = -1.0;
     status = "TURNING TO HUB CENTER";
     double angularCommand = KP * errorRadians - KD * angularRateRadPerSec;
-    double normalized = angularCommand / DriveConstants.kMaxAngularSpeed;
-    return MathUtil.clamp(normalized,
+    double normalized = MathUtil.clamp(
+        angularCommand / DriveConstants.kMaxAngularSpeed,
         -MAX_NORMALIZED_ROTATION, MAX_NORMALIZED_ROTATION);
+    double now = Timer.getFPGATimestamp();
+    if (lastTurnCommandTime >= 0.0) {
+      double dt = MathUtil.clamp(now - lastTurnCommandTime, 0.0, 0.1);
+      double maxStep = MAX_TURN_COMMAND_CHANGE_PER_SECOND * dt;
+      normalized = MathUtil.clamp(normalized,
+          lastTurnCommand - maxStep, lastTurnCommand + maxStep);
+    }
+    lastTurnCommand = normalized;
+    lastTurnCommandTime = now;
+    return normalized;
   }
 
   public boolean isAligned(Optional<Alliance> alliance) {
@@ -225,6 +311,22 @@ public final class HubCenterAlign {
     return aimTrimDegrees;
   }
 
+  public int getRejectedPoseUpdates() {
+    return rejectedPoseUpdates;
+  }
+
+  public double getLastPoseJumpMeters() {
+    return finiteOrSentinel(lastPoseJumpMeters);
+  }
+
+  public double getLastHeadingInnovationDegrees() {
+    return finiteOrSentinel(lastHeadingInnovationDegrees);
+  }
+
+  public String getVisionFilterStatus() {
+    return visionFilterStatus;
+  }
+
   private static double finiteOrSentinel(double value) {
     return Double.isFinite(value) ? value : -999.0;
   }
@@ -237,8 +339,14 @@ public final class HubCenterAlign {
     lastVisionPose = null;
     visionAlliance = null;
     visionTimestampSeconds = -1.0;
-    gyroAtVisionRadians = Double.NaN;
+    gyroToFieldOffsetRadians = Double.NaN;
     hubTags = 0;
+    rejectedPoseUpdates = 0;
+    lastPoseJumpMeters = Double.NaN;
+    lastHeadingInnovationDegrees = Double.NaN;
+    visionFilterStatus = "WAITING FOR FIRST MULTITAG POSE";
+    lastTurnCommand = 0.0;
+    lastTurnCommandTime = -1.0;
     stableSinceSeconds = -1.0;
     headingErrorDegrees = Double.NaN;
     untrimmedHeadingErrorDegrees = Double.NaN;
