@@ -3,6 +3,54 @@
 Working reference: `intake-subsystem` branch. This file is the team's
 persistent checklist, not a claim of match-readiness.
 
+## Live PhotonVision HUB distance -> auto hood encoder position (code, UNTESTED)
+- [x] `HubDistanceCalculator` uses recent, vetted PhotonVision field pose
+      from `PC_Camera`, the alliance indicated by Driver Station, and
+      the 2026 REBUILT alliance HUB CENTER (not visible-tag range).
+- [x] Nominal Welded/blue-origin HUB XY centers in `Constants.HubConstants`:
+      Blue (4.625, 4.033) m, Red (11.920, 4.033) m. These are published
+      nominal positions, NOT yet checked against team's field/CAD.
+- [x] Camera-to-robot offset is already `VisionConstants.ROBOT_TO_CAMERA`;
+      independently verify camera mounting and same Welded tag layout
+      on the camera and robot project.
+- [x] Shooter launch point offset is presently (0, 0) from robot center.
+      Measure actual launcher XY offset if it matters for trajectory.
+- [x] Reject unknown alliance, field-invalid or stale (>0.4 s) camera poses;
+      never use stale cached HUB range for automatic hood action.
+- [x] Low-pass filter new valid camera-distance measurements (alpha=0.35).
+      Do NOT treat filtering as accuracy verification.
+- [x] Add independent `HoodDistanceCalculator` requiring two MEASURED
+      (HUB CENTER DISTANCE, raw duty-cycle HOOD ENCODER) pairs.
+      Interpolate only within endpoints; never invent shot values or extrapolate.
+- [x] `Shot Tuning`: `Distance Hood Enabled` defaults OFF, separate
+      from legacy `Auto Shot Enabled`/RPM tuning. Shooter manual % unchanged.
+      Calibration controls `Hood Cal 1/2 Distance (m)`,
+      `Hood Cal 1/2 Raw Encoder` start invalid (-1 encoder).
+- [x] B held in TELEOP: target live distance-based hood position while
+      shooter continues ORIGINAL percent command; right-stick manual
+      hood override remains available until B release.
+- [x] In AUTONOMOUS, after `Auto Shooter Start`, live hood tracking can
+      execute in parallel with PathPlanner traversal, independent of
+      shooter percent mode. `Auto Shoot` requires actual hood-at-target
+      AND valid fresh calibrated HUB distance before feeding.
+- [x] On camera outage/out-of-calibrated-range, stop chasing the old
+      distance-driven target and return to hood position hold.
+- [x] Added `HubDistanceCalculatorTest` and `HoodDistanceCalculatorTest`;
+      source tests committed, NOT EXECUTED.
+- [ ] On a real WELDED field, verify BLUE/RED HUB center coordinates
+      using official drawings/CAD and check Field2d pose orientation.
+- [ ] Confirm actual shooter location offset, PhotonVision camera transform,
+      camera target geometry, and whether venue field uses Welded or AndyMark.
+- [ ] Collect TWO real distance/hood encoder points under supervision.
+      Tune trajectory and run a full sweep for safe travel; check limits.
+- [ ] Confirm `Distance Hood Enabled` has no effect until explicitly ON
+      and calibration is valid. Test B-hold, B-release, right-stick override,
+      lost tags, far/near out-of-calibration range, wrong alliance.
+- [ ] Verify stopped+shoot auto ready check aborts feeding on stale pose
+      or missed hood target, and that a failed shot does not stall auto.
+- [ ] Run `./gradlew test` and `./gradlew build`; then supervised robot
+      checks. Do not claim successful build or match readiness yet.
+
 ## Intake arm rack-and-pinion control — manual D-pad mapping (not tested)
 - [x] Add dedicated `IntakeArmSubsystem` independent of intake rollers and
       shooter-side feeder, assuming REV brushless NEO + SPARK MAX from photo.
@@ -113,8 +161,10 @@ persistent checklist, not a claim of match-readiness.
 - [ ] Verify readiness, B release, loss of calibration, disabled behavior,
       and switching between open-loop % and closed-loop RPM.
 - [ ] Store calibrated shot values persistently in source after validation.
-- [ ] Stage 2: derive distance from field pose and verified HUB center,
-      then make distance-source selection manual / vision; NOT implemented yet.
+- [x] Stage 2: optional vision-driven distance hood-only targeting added
+      using an independent measured hood table; no guessed RPM values.
+- [ ] Add a dedicated manual/vision source selector for full paired
+      shooter RPM+hood calibration if that behavior is requested later.
 
 ## PathPlanner stationary-shot interlock — code added, untested
 - [x] `Auto Shoot` requires the DriveSubsystem and requests zero
