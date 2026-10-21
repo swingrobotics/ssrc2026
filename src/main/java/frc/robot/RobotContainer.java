@@ -36,6 +36,7 @@ import frc.robot.subsystems.DriveSubsystem;
 import frc.robot.subsystems.FeederSubsystem;
 import frc.robot.subsystems.HoodSubsystem;
 import frc.robot.subsystems.IntakeSubsystem;
+import frc.robot.subsystems.IntakeArmSubsystem;
 import frc.robot.subsystems.ShooterSubsystem;
 import org.photonvision.PhotonCamera;
 import org.photonvision.PhotonPoseEstimator;
@@ -63,6 +64,8 @@ public class RobotContainer {
   private final HoodSubsystem m_hood = new HoodSubsystem();
   // Creates no motor controllers until both intake CAN IDs are assigned.
   private final IntakeSubsystem m_intake = new IntakeSubsystem();
+  // Dedicated intake ARM on an as-yet-unassigned Spark MAX CAN ID.
+  private final IntakeArmSubsystem m_intakeArm = new IntakeArmSubsystem();
 
   private final GenericEntry m_driveSpeedEntry;
   private final GenericEntry m_shooterSpeedEntry;
@@ -722,6 +725,22 @@ public class RobotContainer {
             m_intake::runIntake,
             m_intake::stopIntake,
             m_intake));
+
+    // Xbox controller left-side D-pad / POV.
+    // UP (0 deg): move intake ARM forward; DOWN (180 deg): move it back.
+    // Each command ends and stops when the D-pad is released.
+    // The arm motor remains DISABLED until its unique CAN ID is configured.
+    new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getPOV() == 0)
+        .whileTrue(Commands.runEnd(
+            m_intakeArm::moveForward,
+            m_intakeArm::stopArm,
+            m_intakeArm));
+
+    new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getPOV() == 180)
+        .whileTrue(Commands.runEnd(
+            m_intakeArm::moveBackward,
+            m_intakeArm::stopArm,
+            m_intakeArm));
 
     // Original right-bumper X-lock behavior.
     new JoystickButton(m_driverController, XboxController.Button.kRightBumper.value)
