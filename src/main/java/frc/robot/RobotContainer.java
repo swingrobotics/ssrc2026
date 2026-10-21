@@ -131,6 +131,10 @@ public class RobotContainer {
   private double m_latestGoodSeedTimestamp = -1.0;
   private double m_lastVisionInnovationMeters = -1.0;
   private int m_lastVisionUsedTagCount = 0;
+  private int m_lastDetectedTagCount = 0;
+  private boolean m_lastCoprocMultitagResultPresent = false;
+  private boolean m_lastPhotonPoseMultitagSolved = false;
+  private double m_lastAverageTagRangeMeters = -1.0;
   private int m_acceptedVisionCount = 0;
   private int m_rejectedVisionCount = 0;
   private String m_visionGateStatus = "WAITING FOR CAMERA";
@@ -186,6 +190,15 @@ public class RobotContainer {
     visionTab.addDouble("Vision Accepted Frames", () -> m_acceptedVisionCount);
     visionTab.addDouble("Vision Rejected Frames", () -> m_rejectedVisionCount);
     visionTab.addDouble("Visible Tags Used", () -> m_lastVisionUsedTagCount);
+    // Raw PhotonPipelineResult vs. the result of the robot-side solver.
+    // Two detected tags do not guarantee that coprocessor PnP produced a pose.
+    visionTab.addDouble("Raw Detected Tag Count", () -> m_lastDetectedTagCount);
+    visionTab.addBoolean("Raw Coproc MultiTag Present",
+        () -> m_lastCoprocMultitagResultPresent);
+    visionTab.addBoolean("PhotonPose MultiTag Solved",
+        () -> m_lastPhotonPoseMultitagSolved);
+    visionTab.addDouble("Pose Avg Tag Range (m)",
+        () -> m_lastAverageTagRangeMeters);
     visionTab.addDouble("Vision/Fused Delta XY (m)",
         () -> m_lastVisionInnovationMeters);
     visionTab.addDouble("Tag ID", () -> m_lastTagId);
@@ -508,7 +521,13 @@ public class RobotContainer {
   private void updateVisionTarget() {
     double now = Timer.getFPGATimestamp();
     for (var result : m_photonCamera.getAllUnreadResults()) {
-      if (!result.hasTargets()) continue;
+      m_lastDetectedTagCount = result.getTargets().size();
+      m_lastCoprocMultitagResultPresent = result.getMultiTagResult().isPresent();
+      m_lastPhotonPoseMultitagSolved = false;
+      if (!result.hasTargets()) {
+        m_poseSolver = "No Targets";
+        continue;
+      }
 
       var bestTarget = result.getBestTarget();
       if (bestTarget != null
@@ -520,6 +539,7 @@ public class RobotContainer {
       Optional<EstimatedRobotPose> estimate =
           m_photonPoseEstimator.estimateCoprocMultiTagPose(result);
       boolean multiTag = estimate.isPresent();
+      m_lastPhotonPoseMultitagSolved = multiTag;
 
       if (estimate.isEmpty() && bestTarget != null
           && VisionConstants.FIELD_LAYOUT.getTagPose(
@@ -532,8 +552,11 @@ public class RobotContainer {
         estimate = m_photonPoseEstimator.estimateLowestAmbiguityPose(result);
       }
       if (estimate.isEmpty()) {
+        m_poseSolver = "No Valid Pose";
         m_rejectedVisionCount++;
-        m_visionGateStatus = "NO VALID PNP RESULT";
+        m_visionGateStatus = m_lastCoprocMultitagResultPresent
+            ? "MULTITAG RESULT EXISTS BUT ROBOT ESTIMATOR RETURNED EMPTY"
+            : "NO COPROC MULTITAG RESULT; SINGLE TAG FALLBACK FAILED";
         continue;
       }
 
@@ -544,15 +567,27 @@ public class RobotContainer {
       int used = measurement.targetsUsed == null
           ? 0 : (int) measurement.targetsUsed.stream()
               .mapToInt(t -> t.getFiducialId()).distinct().count();
-      double avgDistance = measurement.targetsUsed == null ? Double.NaN
-          : measurement.targetsUsed.stream()
-              .mapToDouble(t -> t.getBestCameraToTarget()
-                  .getTranslation().getNorm())
-              .filter(Double::isFinite).average().orElse(Double.NaN);
-      double ambiguity = bestTarget != null
-          ? bestTarget.getPoseAmbiguity() : Double.NaN;
       Pose3d rawPose3d = measurement.estimatedPose;
       Pose2d rawPose = rawPose3d.toPose2d();
+
+      // In coprocessor MultiTag mode PhotonVision may omit per-target
+      // camera-to-tag SolvePnP transforms unless "Always Do Single-Target
+      // Estimation" is enabled (PhotonVision MultiTag documentation).
+      // Compute distance from the KNOWN global tag poses instead.
+      Pose3d fieldCameraPose = rawPose3d.transformBy(
+          VisionConstants.ROBOT_TO_CAMERA);
+      double avgDistance = measurement.targetsUsed == null ? Double.NaN
+          : measurement.targetsUsed.stream()
+              .map(t -> VisionConstants.FIELD_LAYOUT.getTagPose(
+                  t.getFiducialId()))
+              .filter(Optional::isPresent)
+              .mapToDouble(tagPose -> tagPose.get().getTranslation()
+                  .getDistance(fieldCameraPose.getTranslation()))
+              .filter(Double::isFinite)
+              .average().orElse(Double.NaN);
+      m_lastAverageTagRangeMeters = avgDistance;
+      double ambiguity = bestTarget != null
+          ? bestTarget.getPoseAmbiguity() : Double.NaN;
 
       m_lastRawVisionPose = rawPose;
       m_lastVisionPoseReceivedAt = now;
