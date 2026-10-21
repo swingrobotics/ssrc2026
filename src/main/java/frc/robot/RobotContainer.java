@@ -75,7 +75,7 @@ public class RobotContainer {
   private final ShooterSubsystem m_shooter = new ShooterSubsystem();
   // The SHOOTER feeder (CAN 11/14) may feed only after measured flywheel
   // stability in percent mode or target RPM stability in calibrated mode.
-  private final FeederSubsystem m_feeder = new FeederSubsystem(m_shooter::isReadyToFeed);
+  private final FeederSubsystem m_feeder = new FeederSubsystem(this::isShooterFeederReady);
   private final HoodSubsystem m_hood = new HoodSubsystem();
   // Creates no motor controllers until both intake CAN IDs are assigned.
   private final IntakeSubsystem m_intake = new IntakeSubsystem();
@@ -572,7 +572,9 @@ public class RobotContainer {
     Optional<ShotSetpoint> shot = Optional.empty();
     double rpm = 0.0;
     double percent = 0.0;
-    if (m_autoUseCalibratedShotEntry.getBoolean(false)) {
+    // Live hood-by-distance mode intentionally keeps the shooter in its
+    // original PERCENT mode, even if legacy RPM calibration is toggled ON.
+    if (m_autoUseCalibratedShotEntry.getBoolean(false) && !isDistanceHoodEnabled()) {
       shot = getShotSolution();
       if (shot.isEmpty()) {
         m_autoShooterStatus = "BLOCKED: no valid calibrated shot for distance";
@@ -656,6 +658,23 @@ public class RobotContainer {
 
   private boolean isDistanceHoodEnabled() {
     return m_distanceHoodEnabledEntry.getBoolean(false);
+  }
+
+  /**
+   * Hardware feeder interlock. In live distance-hood mode, disallow any
+   * feed until the actual hood encoder reaches the current fresh target.
+   * This also covers manual A+B (the old interlock only checked flywheel).
+   */
+  private boolean isShooterFeederReady() {
+    if (!m_shooter.isReadyToFeed()) {
+      return false;
+    }
+    // During subsystem constructor setup, dashboard entries may not yet
+    // have been assigned. Never evaluate distance mode before it exists.
+    if (m_distanceHoodEnabledEntry == null || !isDistanceHoodEnabled()) {
+      return true;
+    }
+    return !m_autoHoodManualOverride && isDistanceHoodAtTarget();
   }
 
   /** Invalidates stale pose/unknown alliance instead of reusing old geometry. */
@@ -786,7 +805,8 @@ public class RobotContainer {
   }
 
   private boolean isAutoShotReady() {
-    if (!isAutoShotEnabled()
+    if (isDistanceHoodEnabled()
+        || !isAutoShotEnabled()
         || !m_driverController.getBButton()
         || m_autoHoodManualOverride
         || !m_autoHoodTargetActive) {
@@ -804,6 +824,9 @@ public class RobotContainer {
   }
 
   private String getAutoShotStatus() {
+    if (isDistanceHoodEnabled()) {
+      return "BYPASSED: live hood distance uses shooter percent output";
+    }
     if (!isAutoShotEnabled()) {
       return "OFF: manual RPM and hood control";
     }
@@ -999,7 +1022,8 @@ public class RobotContainer {
     new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
-              if (isAutoShotEnabled()) {
+              if (isAutoShotEnabled() && !isDistanceHoodEnabled()) {
+                // Legacy calibrated RPM only when distance hood is OFF.
                 // Invalid calibration or hood sensor blocks closed-loop RPM.
                 double rpm = (!HoodConstants.CALIBRATION_MODE && m_hood.isHoodReady())
                     ? getShotSolution().map(ShotSetpoint::motorRpm).orElse(0.0)
