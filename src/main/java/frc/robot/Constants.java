@@ -162,8 +162,9 @@ public final class Constants {
     // Original 50% driver-controlled duty cycle. Manual/uncalibrated auto
     // operation uses this, never an RPM-to-percent conversion.
     public static final double DEFAULT_OUTPUT_PERCENT = 50.0;
-    // RPM remains available only for validated shot calibration/auto tuning.
-    public static final double DEFAULT_RPM = 1500.0;
+    // Safety limit for opt-in fixed motor-shaft RPM testing. This is NOT a
+    // measured match-ready shooting speed; choose the actual target from
+    // supervised robot measurements in Shuffleboard.
     public static final double MAX_RPM = 3000.0;
     public static final double RPM_TOLERANCE = 150.0;
     public static final int READY_STABLE_CYCLES = 5; // five 20 ms loops
