@@ -49,7 +49,8 @@ import java.util.Optional;
  */
 public class RobotContainer {
   private static final double kDefaultDrivePercent = 100.0;
-  private static final double kDefaultShooterRpm = ShooterConstants.DEFAULT_RPM;
+  private static final double kDefaultShooterPercent =
+      ShooterConstants.DEFAULT_OUTPUT_PERCENT;
   private static final double kDefaultFeederPercent = Math.abs(FeederConstants.TEST_SPEED) * 100.0;
 
   // The original swerve/vision/autonomous subsystem, plus the ZIP's mechanism subsystems.
@@ -82,6 +83,8 @@ public class RobotContainer {
   private final GenericEntry m_autoUseCalibratedShotEntry;
   private boolean m_autoShooterRequested = false;
   private double m_autoShooterTargetRpm = 0.0;
+  private double m_autoShooterTargetPercent = 0.0;
+  private double m_autoShooterStartTime = -1.0;
   private Optional<ShotSetpoint> m_autoShooterCalibratedSetpoint = Optional.empty();
   private String m_autoShooterStatus = "Idle";
   private final GenericEntry m_visionFusionEntry;
@@ -130,10 +133,13 @@ public class RobotContainer {
     m_driveSpeedEntry = driveTab.add("Drive Speed (%)", kDefaultDrivePercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
-    m_shooterSpeedEntry = driveTab.add("Shooter Target RPM", kDefaultShooterRpm)
+    m_shooterSpeedEntry = driveTab.add("Shooter Output (%)", kDefaultShooterPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 0.0, "max", ShooterConstants.MAX_RPM)).getEntry();
-    // Keep essential live shooter status on the driver tab, too.
+        .withProperties(Map.of("min", 0.0,
+            "max", ShooterConstants.MAX_MOTOR_OUTPUT * 100.0)).getEntry();
+    // Actual shaft RPM remains a measurement, not the manual speed control.
+    driveTab.addDouble("Shooter Command Output (%)", m_shooter::getOutputPercent);
+    driveTab.addString("Shooter Control Mode", m_shooter::getControlMode);
     driveTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM);
     driveTab.addDouble("Shooter Error RPM", m_shooter::getErrorRPM);
     driveTab.addBoolean("Shooter RPM Ready", m_shooter::isAtSpeed);
@@ -167,11 +173,12 @@ public class RobotContainer {
     shotTab.addBoolean("Hood At Target", m_hood::isAtTargetPosition);
     shotTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
     shotTab.addString("Auto Shot Status", this::getAutoShotStatus);
-    // When OFF, autonomous uses the existing Drive RPM slider and holds the
-    // hood's current position. When ON, it requires valid shot calibration.
+    // When OFF, autonomous uses the driver percent-output slider and holds
+    // the hood's current position. When ON, it requires valid RPM calibration.
     m_autoUseCalibratedShotEntry =
         shotTab.add("Autonomous Use Calibration", false).getEntry();
     shotTab.addDouble("Autonomous Target RPM", () -> m_autoShooterTargetRpm);
+    shotTab.addDouble("Autonomous Output (%)", () -> m_autoShooterTargetPercent);
     shotTab.addBoolean("Autonomous Shooter Running", () -> m_autoShooterRequested);
     shotTab.addBoolean("Autonomous Shot Ready", this::isAutonomousShooterReady);
     shotTab.addString("Autonomous Shooter Status", () -> m_autoShooterStatus);
@@ -276,8 +283,12 @@ public class RobotContainer {
     // with drive subsystem requirements interfering with path following).
     m_shooter.setDefaultCommand(new RunCommand(() -> {
       if (DriverStation.isAutonomousEnabled() && m_autoShooterRequested) {
-        m_shooter.setTargetRPM(m_autoShooterTargetRpm);
-      } else if (m_shooter.getTargetRPM() > 0.0) {
+        if (m_autoShooterCalibratedSetpoint.isPresent()) {
+          m_shooter.setTargetRPM(m_autoShooterTargetRpm);
+        } else {
+          m_shooter.setOutputPercent(m_autoShooterTargetPercent);
+        }
+      } else if (m_shooter.isRunning()) {
         m_shooter.stopShooter();
       }
     }, m_shooter));
@@ -289,10 +300,12 @@ public class RobotContainer {
     return Double.isFinite(percent) ? MathUtil.clamp(percent, 0.0, 100.0) / 100.0 : 0.0;
   }
 
-  /** Read a safe, non-negative motor RPM request from the shooter slider. */
-  private static double getShooterTargetRPM(GenericEntry entry) {
-    double rpm = entry.getDouble(kDefaultShooterRpm);
-    return Double.isFinite(rpm) ? MathUtil.clamp(rpm, 0.0, ShooterConstants.MAX_RPM) : 0.0;
+  /** Read direct motor output percentage; does NOT convert RPM to duty cycle. */
+  private static double getShooterOutputPercent(GenericEntry entry) {
+    double percent = entry.getDouble(kDefaultShooterPercent);
+    return Double.isFinite(percent)
+        ? MathUtil.clamp(percent, 0.0, ShooterConstants.MAX_MOTOR_OUTPUT * 100.0)
+        : 0.0;
   }
 
   /**
@@ -308,8 +321,10 @@ public class RobotContainer {
             Commands.waitUntil(this::isAutonomousShooterReady).withTimeout(2.0),
             Commands.runOnce(() -> {
               m_autoShooterStatus = isAutonomousShooterReady()
-                  ? "READY: feeder not installed; no fuel released"
-                  : "SKIPPED: RPM/hood not ready within 2s";
+                  ? (m_autoShooterCalibratedSetpoint.isPresent()
+                      ? "READY: calibrated RPM/hood; feeder not installed"
+                      : "SPINUP CHECK PASSED: percent mode, no calibrated shot")
+                  : "SKIPPED: shooter/hood not ready within 2s";
             })));
     NamedCommands.registerCommand("Auto Shooter Stop",
         Commands.runOnce(this::stopAutonomousShooter));
@@ -327,7 +342,8 @@ public class RobotContainer {
     }
 
     Optional<ShotSetpoint> shot = Optional.empty();
-    double rpm;
+    double rpm = 0.0;
+    double percent = 0.0;
     if (m_autoUseCalibratedShotEntry.getBoolean(false)) {
       shot = getShotSolution();
       if (shot.isEmpty()) {
@@ -335,39 +351,49 @@ public class RobotContainer {
         return;
       }
       rpm = shot.get().motorRpm();
+      if (!Double.isFinite(rpm) || rpm <= 0.0 || rpm > ShooterConstants.MAX_RPM) {
+        m_autoShooterStatus = "BLOCKED: invalid calibrated RPM";
+        return;
+      }
     } else {
-      rpm = getShooterTargetRPM(m_shooterSpeedEntry);
-    }
-
-    if (!Double.isFinite(rpm) || rpm <= 0.0 || rpm > ShooterConstants.MAX_RPM) {
-      m_autoShooterStatus = "BLOCKED: invalid RPM setpoint";
-      return;
+      percent = getShooterOutputPercent(m_shooterSpeedEntry);
+      if (!Double.isFinite(percent) || percent <= 0.0) {
+        m_autoShooterStatus = "BLOCKED: invalid shooter output percent";
+        return;
+      }
     }
 
     m_autoShooterCalibratedSetpoint = shot;
     m_autoShooterTargetRpm = rpm;
+    m_autoShooterTargetPercent = percent;
+    m_autoShooterStartTime = Timer.getFPGATimestamp();
     m_autoShooterRequested = true;
     m_autoShooterStatus = shot.isPresent()
         ? "SPINNING: calibrated RPM and hood target"
-        : "SPINNING: Drive RPM slider; holding current hood angle";
+        : "SPINNING: Drive output percent, hood holds current position";
   }
 
   private boolean isAutonomousShooterReady() {
     if (!DriverStation.isAutonomousEnabled()
         || !m_autoShooterRequested
-        || !m_shooter.isAtSpeed()
-        || !m_hood.isHoodReady()
-        || Math.abs(m_shooter.getTargetRPM() - m_autoShooterTargetRpm) > 1.0) {
+        || !m_hood.isHoodReady()) {
       return false;
     }
-    // When shot calibration has not been measured, the hood merely holds its
-    // manually established current position. This is a spin-up test, NOT a
-    // verified shooting solution.
+    // Uncalibrated percentage mode is ONLY a spin-up check. It cannot
+    // certify accuracy or a specific RPM. Require a minimum elapsed time
+    // and a measured rotating shaft rather than claiming RPM readiness.
     if (m_autoShooterCalibratedSetpoint.isEmpty()) {
-      return true;
+      return m_shooter.getControlMode().equals("PERCENT")
+          && m_shooter.getOutputPercent() > 0.0
+          && Double.isFinite(m_shooter.getActualRPM())
+          && m_shooter.getActualRPM() >= 100.0
+          && m_autoShooterStartTime >= 0.0
+          && Timer.getFPGATimestamp() - m_autoShooterStartTime >= 1.0;
     }
     ShotSetpoint requested = m_autoShooterCalibratedSetpoint.get();
-    return m_hood.isAtTargetPosition()
+    return m_shooter.isAtSpeed()
+        && Math.abs(m_shooter.getTargetRPM() - m_autoShooterTargetRpm) <= 1.0
+        && m_hood.isAtTargetPosition()
         && Math.abs(m_hood.getTargetPosition() - requested.hoodPosition())
             <= HoodConstants.AUTO_TARGET_TOLERANCE;
   }
@@ -375,6 +401,8 @@ public class RobotContainer {
   private void stopAutonomousShooter() {
     m_autoShooterRequested = false;
     m_autoShooterTargetRpm = 0.0;
+    m_autoShooterTargetPercent = 0.0;
+    m_autoShooterStartTime = -1.0;
     m_autoShooterCalibratedSetpoint = Optional.empty();
     m_shooter.stopShooter();
     m_autoShooterStatus = "STOPPED";
@@ -615,20 +643,20 @@ public class RobotContainer {
             m_feeder::stopFeeder,
             m_feeder));
 
-    // B remains hold-to-spin. In auto mode, it uses calibrated manual-distance
-    // setpoints only; invalid/out-of-range input stops the shooter.
+    // B remains hold-to-spin. Default is the ORIGINAL manual percent output;
+    // optional, opt-in Auto Shot mode retains calibrated RPM control.
     new JoystickButton(m_driverController, XboxController.Button.kB.value)
         .whileTrue(Commands.runEnd(
             () -> {
-              double rpm = getShooterTargetRPM(m_shooterSpeedEntry);
               if (isAutoShotEnabled()) {
-                // Never spin up automatic settings with an invalid hood sensor
-                // or when the hood is in mechanical calibration mode.
-                rpm = (!HoodConstants.CALIBRATION_MODE && m_hood.isHoodReady())
+                // Invalid calibration or hood sensor blocks closed-loop RPM.
+                double rpm = (!HoodConstants.CALIBRATION_MODE && m_hood.isHoodReady())
                     ? getShotSolution().map(ShotSetpoint::motorRpm).orElse(0.0)
                     : 0.0;
+                m_shooter.setTargetRPM(rpm);
+              } else {
+                m_shooter.setOutputPercent(getShooterOutputPercent(m_shooterSpeedEntry));
               }
-              m_shooter.setTargetRPM(rpm);
             },
             m_shooter::stopShooter,
             m_shooter));
