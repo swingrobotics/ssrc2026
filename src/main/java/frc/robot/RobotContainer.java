@@ -5,6 +5,7 @@
 package frc.robot;
 
 import com.pathplanner.lib.auto.AutoBuilder;
+import com.pathplanner.lib.auto.NamedCommands;
 import edu.wpi.first.apriltag.AprilTagFieldLayout;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.geometry.Pose2d;
@@ -75,6 +76,14 @@ public class RobotContainer {
   private final GenericEntry m_shotP2HoodEntry;
   private boolean m_autoHoodTargetActive = false;
   private boolean m_autoHoodManualOverride = false;
+  // Autonomous commands set a request; subsystem default commands own the
+  // motors continuously, so the request persists across paths and is always
+  // cleared on end/cancellation. No feeder is activated in this phase.
+  private final GenericEntry m_autoUseCalibratedShotEntry;
+  private boolean m_autoShooterRequested = false;
+  private double m_autoShooterTargetRpm = 0.0;
+  private Optional<ShotSetpoint> m_autoShooterCalibratedSetpoint = Optional.empty();
+  private String m_autoShooterStatus = "Idle";
   private final GenericEntry m_visionFusionEntry;
   private final GenericEntry m_visionResetEntry;
   private double m_lastTagId = -1.0;
@@ -158,6 +167,14 @@ public class RobotContainer {
     shotTab.addBoolean("Hood At Target", m_hood::isAtTargetPosition);
     shotTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
     shotTab.addString("Auto Shot Status", this::getAutoShotStatus);
+    // When OFF, autonomous uses the existing Drive RPM slider and holds the
+    // hood's current position. When ON, it requires valid shot calibration.
+    m_autoUseCalibratedShotEntry =
+        shotTab.add("Autonomous Use Calibration", false).getEntry();
+    shotTab.addDouble("Autonomous Target RPM", () -> m_autoShooterTargetRpm);
+    shotTab.addBoolean("Autonomous Shooter Running", () -> m_autoShooterRequested);
+    shotTab.addBoolean("Autonomous Shot Ready", this::isAutonomousShooterReady);
+    shotTab.addString("Autonomous Shooter Status", () -> m_autoShooterStatus);
     driveTab.addBoolean("Auto Shot Enabled", this::isAutoShotEnabled);
     driveTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
 
@@ -185,6 +202,8 @@ public class RobotContainer {
     debugTab.addDouble("Vision Pose Age (s)", this::getVisionPoseAgeSeconds);
 
     configureButtonBindings();
+    // Must register before AutoBuilder.buildAutoChooser() parses .auto files.
+    registerAutonomousShooterCommands();
 
     SendableChooser<Command> autoChooser;
     try {
@@ -212,31 +231,37 @@ public class RobotContainer {
             },
             m_robotDrive));
 
-    // Right stick always wins. If the stick was moved during auto shot,
-    // the hood stays in manual hold until B is released and pressed again.
+    // The right stick has priority in teleop. During autonomous, never read
+    // joystick input; optionally hold a validated, snapshotted shot position.
     m_hood.setDefaultCommand(
         new RunCommand(
             () -> {
-              double hoodInput = MathUtil.applyDeadband(
+              boolean autonomous = DriverStation.isAutonomousEnabled();
+              double hoodInput = autonomous ? 0.0 : MathUtil.applyDeadband(
                   -m_driverController.getRightY(), OIConstants.kHoodDeadband);
-              boolean autoRequested = isAutoShotEnabled() && m_driverController.getBButton();
-              if (!m_driverController.getBButton()) {
+              boolean teleopAutoRequested = DriverStation.isTeleopEnabled()
+                  && isAutoShotEnabled() && m_driverController.getBButton();
+              if (!m_driverController.getBButton() && !autonomous) {
                 m_autoHoodManualOverride = false;
               }
               if (hoodInput != 0.0) {
-                if (autoRequested) {
+                if (teleopAutoRequested) {
                   m_autoHoodManualOverride = true;
                 }
                 m_autoHoodTargetActive = false;
                 m_hood.setManual(hoodInput * HoodConstants.TEST_MAX_SPEED);
                 return;
               }
-              if (autoRequested && !m_autoHoodManualOverride) {
-                Optional<ShotSetpoint> shot = getShotSolution();
-                if (shot.isPresent() && m_hood.setTargetPosition(shot.get().hoodPosition())) {
-                  m_autoHoodTargetActive = true;
-                  return;
-                }
+              Optional<ShotSetpoint> requestedShot = Optional.empty();
+              if (autonomous && m_autoShooterRequested) {
+                requestedShot = m_autoShooterCalibratedSetpoint;
+              } else if (teleopAutoRequested && !m_autoHoodManualOverride) {
+                requestedShot = getShotSolution();
+              }
+              if (requestedShot.isPresent()
+                  && m_hood.setTargetPosition(requestedShot.get().hoodPosition())) {
+                m_autoHoodTargetActive = true;
+                return;
               }
               if (m_autoHoodTargetActive) {
                 m_autoHoodTargetActive = false;
@@ -246,6 +271,16 @@ public class RobotContainer {
               }
             },
             m_hood));
+
+    // Keeps motor ownership in one command (and avoids path-marker commands
+    // with drive subsystem requirements interfering with path following).
+    m_shooter.setDefaultCommand(new RunCommand(() -> {
+      if (DriverStation.isAutonomousEnabled() && m_autoShooterRequested) {
+        m_shooter.setTargetRPM(m_autoShooterTargetRpm);
+      } else if (m_shooter.getTargetRPM() > 0.0) {
+        m_shooter.stopShooter();
+      }
+    }, m_shooter));
   }
 
   /** Read a 0-100% Shuffleboard slider and safely convert to an output multiplier. */
@@ -258,6 +293,91 @@ public class RobotContainer {
   private static double getShooterTargetRPM(GenericEntry entry) {
     double rpm = entry.getDouble(kDefaultShooterRpm);
     return Double.isFinite(rpm) ? MathUtil.clamp(rpm, 0.0, ShooterConstants.MAX_RPM) : 0.0;
+  }
+
+  /**
+   * Autonomous shooting placeholders. Feeder hardware is NOT yet complete,
+   * so "Auto Shoot" only checks readiness and reports the status. No fuel
+   * feeding / ball launch is commanded by these named commands.
+   */
+  private void registerAutonomousShooterCommands() {
+    NamedCommands.registerCommand("Auto Shooter Start",
+        Commands.runOnce(this::startAutonomousShooter));
+    NamedCommands.registerCommand("Auto Shoot",
+        Commands.sequence(
+            Commands.waitUntil(this::isAutonomousShooterReady).withTimeout(2.0),
+            Commands.runOnce(() -> {
+              m_autoShooterStatus = isAutonomousShooterReady()
+                  ? "READY: feeder not installed; no fuel released"
+                  : "SKIPPED: RPM/hood not ready within 2s";
+            })));
+    NamedCommands.registerCommand("Auto Shooter Stop",
+        Commands.runOnce(this::stopAutonomousShooter));
+  }
+
+  private void startAutonomousShooter() {
+    stopAutonomousShooter();
+    if (!DriverStation.isAutonomousEnabled()) {
+      m_autoShooterStatus = "BLOCKED: not in enabled autonomous";
+      return;
+    }
+    if (HoodConstants.CALIBRATION_MODE || !m_hood.isHoodReady()) {
+      m_autoShooterStatus = "BLOCKED: hood encoder or calibration mode";
+      return;
+    }
+
+    Optional<ShotSetpoint> shot = Optional.empty();
+    double rpm;
+    if (m_autoUseCalibratedShotEntry.getBoolean(false)) {
+      shot = getShotSolution();
+      if (shot.isEmpty()) {
+        m_autoShooterStatus = "BLOCKED: no valid calibrated shot for distance";
+        return;
+      }
+      rpm = shot.get().motorRpm();
+    } else {
+      rpm = getShooterTargetRPM(m_shooterSpeedEntry);
+    }
+
+    if (!Double.isFinite(rpm) || rpm <= 0.0 || rpm > ShooterConstants.MAX_RPM) {
+      m_autoShooterStatus = "BLOCKED: invalid RPM setpoint";
+      return;
+    }
+
+    m_autoShooterCalibratedSetpoint = shot;
+    m_autoShooterTargetRpm = rpm;
+    m_autoShooterRequested = true;
+    m_autoShooterStatus = shot.isPresent()
+        ? "SPINNING: calibrated RPM and hood target"
+        : "SPINNING: Drive RPM slider; holding current hood angle";
+  }
+
+  private boolean isAutonomousShooterReady() {
+    if (!DriverStation.isAutonomousEnabled()
+        || !m_autoShooterRequested
+        || !m_shooter.isAtSpeed()
+        || !m_hood.isHoodReady()
+        || Math.abs(m_shooter.getTargetRPM() - m_autoShooterTargetRpm) > 1.0) {
+      return false;
+    }
+    // When shot calibration has not been measured, the hood merely holds its
+    // manually established current position. This is a spin-up test, NOT a
+    // verified shooting solution.
+    if (m_autoShooterCalibratedSetpoint.isEmpty()) {
+      return true;
+    }
+    ShotSetpoint requested = m_autoShooterCalibratedSetpoint.get();
+    return m_hood.isAtTargetPosition()
+        && Math.abs(m_hood.getTargetPosition() - requested.hoodPosition())
+            <= HoodConstants.AUTO_TARGET_TOLERANCE;
+  }
+
+  private void stopAutonomousShooter() {
+    m_autoShooterRequested = false;
+    m_autoShooterTargetRpm = 0.0;
+    m_autoShooterCalibratedSetpoint = Optional.empty();
+    m_shooter.stopShooter();
+    m_autoShooterStatus = "STOPPED";
   }
 
   /** Calibration points use observed MOTOR shaft RPM and raw hood encoder readings. */
@@ -560,6 +680,11 @@ public class RobotContainer {
    * @return selected autonomous command
    */
   public Command getAutonomousCommand() {
-    return m_autoChooser.getSelected();
+    Command auto = m_autoChooser.getSelected();
+    if (auto == null) {
+      return Commands.none();
+    }
+    // Stop flywheels even when an auto is interrupted before its Stop marker.
+    return auto.finallyDo(interrupted -> stopAutonomousShooter());
   }
 }
