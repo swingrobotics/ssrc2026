@@ -97,6 +97,7 @@ public class RobotContainer {
   private String m_autoShooterStatus = "Idle";
   private final GenericEntry m_visionFusionEntry;
   private final GenericEntry m_visionResetEntry;
+  private final GenericEntry m_fieldVerifiedEntry;
   private final GenericEntry m_hubAimTrimEntry;
   private double m_lastTagId = -1.0;
   private String m_poseSolver = "None";
@@ -124,6 +125,13 @@ public class RobotContainer {
   private double m_lastVisionPoseReceivedAt = -1.0;
   private double m_lastVisionMeasurementTimestamp = -1.0;
   private Pose2d m_lastRawVisionPose = null;
+  private Pose2d m_latestGoodSeedPose = null;
+  private double m_latestGoodSeedTimestamp = -1.0;
+  private double m_lastVisionInnovationMeters = -1.0;
+  private int m_lastVisionUsedTagCount = 0;
+  private int m_acceptedVisionCount = 0;
+  private int m_rejectedVisionCount = 0;
+  private String m_visionGateStatus = "WAITING FOR CAMERA";
 
   /**
    * The container for the robot. Contains subsystems, OI devices, and commands.
@@ -157,22 +165,44 @@ public class RobotContainer {
     shotTab.addString("Last Auto Shot Result", () -> m_autoLastShotResult);
     shotTab.addBoolean("Auto Robot Stopped", this::isAutonomousDriveStoppedNow);
 
-    // Vision view: minimal AprilTag pose readings and operator-controlled fusion.
+    // FRC 5024: validate distance/count and supply range-aware covariance.
+    // FRC 6328: maintain one sensor-fused pose, with camera capture times.
     ShuffleboardTab visionTab = Shuffleboard.getTab("Vision");
-    visionTab.addDouble("Fresh HUB Tag Count",
-        () -> m_hubCenterAlign.getVisibleHubTags(DriverStation.getAlliance()));
-    visionTab.addDouble("Hub Heading Error (deg)", m_hubCenterAlign::getHeadingErrorDegrees);
-    visionTab.addBoolean("Hub Center Aligned",
-        () -> m_visionAlignEnabled && m_hubCenterAlign.isAligned(DriverStation.getAlliance()));
-    visionTab.addString("Hub Center Align Status", m_hubCenterAlign::getStatus);
-    visionTab.addString("Hub Vision Filter Status", m_hubCenterAlign::getVisionFilterStatus);
-    visionTab.addDouble("Hub Rejected Pose Frames", m_hubCenterAlign::getRejectedPoseUpdates);
-    visionTab.addDouble("Hub Pose Step (m)", m_hubCenterAlign::getLastPoseJumpMeters);
-    visionTab.addDouble("Hub Heading Innovation (deg)",
-        m_hubCenterAlign::getLastHeadingInnovationDegrees);
-    // Compensate a VERIFIED constant launcher/vision heading bias.
-    // Positive trim commands a more counterclockwise aim; negative clockwise.
-    // Zero is always the safe starting point; do not blindly dial in an angle.
+    m_fieldVerifiedEntry = visionTab.add("Field Camera Verified", false).getEntry();
+    m_visionFusionEntry = visionTab.add("Fusion Enabled", true).getEntry();
+    m_visionResetEntry = visionTab.add("Reset Pose (Disabled)", false).getEntry();
+    visionTab.addBoolean("Pose Initialized", m_robotDrive::isFieldPoseInitialized);
+    visionTab.addBoolean("NavX Ready", m_robotDrive::isGyroReady);
+    visionTab.addBoolean("Fused Vision Fresh",
+        () -> m_robotDrive.hasRecentVision(1.0));
+    visionTab.addDouble("Fused Pose X (m)", () -> m_robotDrive.getPose().getX());
+    visionTab.addDouble("Fused Pose Y (m)", () -> m_robotDrive.getPose().getY());
+    visionTab.addDouble("Fused Heading (deg)",
+        () -> m_robotDrive.getPose().getRotation().getDegrees());
+    visionTab.addString("Pose Init Status", () -> m_visionResetStatus);
+    visionTab.addString("Vision Gate Status", () -> m_visionGateStatus);
+    visionTab.addDouble("Vision Accepted Frames", () -> m_acceptedVisionCount);
+    visionTab.addDouble("Vision Rejected Frames", () -> m_rejectedVisionCount);
+    visionTab.addDouble("Visible Tags Used", () -> m_lastVisionUsedTagCount);
+    visionTab.addDouble("Vision/Fused Delta XY (m)",
+        () -> m_lastVisionInnovationMeters);
+    visionTab.addDouble("Tag ID", () -> m_lastTagId);
+    visionTab.addBoolean("Raw Pose Fresh", this::isVisionPoseFresh);
+    visionTab.addDouble("Raw Pose X (m)",
+        () -> m_lastRawVisionPose == null ? -1.0 : m_lastRawVisionPose.getX());
+    visionTab.addDouble("Raw Pose Y (m)",
+        () -> m_lastRawVisionPose == null ? -1.0 : m_lastRawVisionPose.getY());
+    visionTab.addDouble("Raw Heading (deg)",
+        () -> m_lastRawVisionPose == null ? -999.0
+            : m_lastRawVisionPose.getRotation().getDegrees());
+    visionTab.addString("Pose Solver", () -> m_poseSolver);
+    visionTab.addString("Alliance",
+        () -> DriverStation.getAlliance().map(Enum::name).orElse("UNKNOWN"));
+    visionTab.addString("HUB Align Status", m_hubCenterAlign::getStatus);
+    visionTab.addDouble("HUB Error (deg)",
+        m_hubCenterAlign::getHeadingErrorDegrees);
+    visionTab.addBoolean("HUB Aligned",
+        () -> m_visionAlignEnabled && m_hubCenterAlign.isAligned());
     m_hubAimTrimEntry = visionTab.add("Hub Aim Trim (deg)", 0.0)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", -15.0, "max", 15.0)).getEntry();
@@ -185,21 +215,6 @@ public class RobotContainer {
         m_hubCenterAlign::getDesiredHeadingDegrees);
     visionTab.addDouble("Hub Bearing (deg)", m_hubCenterAlign::getHubBearingDegrees);
     visionTab.addDouble("Hub Distance (m)", m_hubCenterAlign::getHubDistanceMeters);
-    visionTab.addDouble("Tag ID", () -> m_lastTagId);
-    visionTab.addBoolean("Pose Fresh", this::isVisionPoseFresh);
-    visionTab.addDouble("Raw Pose X (m)",
-        () -> m_lastRawVisionPose == null ? -1.0 : m_lastRawVisionPose.getX());
-    visionTab.addDouble("Raw Pose Y (m)",
-        () -> m_lastRawVisionPose == null ? -1.0 : m_lastRawVisionPose.getY());
-    visionTab.addDouble("Raw Heading (deg)",
-        () -> m_lastRawVisionPose == null ? 0.0
-            : m_lastRawVisionPose.getRotation().getDegrees());
-    visionTab.addString("Pose Solver", () -> m_poseSolver);
-    m_visionFusionEntry = visionTab.add("Fusion Enabled", false).getEntry();
-    m_visionResetEntry = visionTab.add("Reset Pose (Disabled)", false).getEntry();
-    visionTab.addString("Reset Status", () -> m_visionResetStatus);
-    visionTab.addString("Alliance", () -> DriverStation.getAlliance()
-        .map(Enum::name).orElse("UNKNOWN"));
 
     ShuffleboardTab debugTab = Shuffleboard.getTab("Debug");
     debugTab.addString("Vision Field Layout", () -> "2026 REBUILT Welded");
@@ -474,130 +489,148 @@ public class RobotContainer {
   }
 
   /**
-   * Read PhotonVision frames exactly once per robot loop. This supplies both
-   * the existing visible-tag yaw aiming and the NEW official-field robot pose.
-   * Runs in disabled, autonomous, and teleop via updateDashboard().
+   * PhotonVision is a MEASUREMENT SOURCE, not the heading controller.
+   * Every accepted pose enters WPILib's timestamped SwerveDrivePoseEstimator
+   * (FRC 5024 / 6328 pattern). All visible field tags can contribute.
+   * Initial field coordinates require a verified disabled multitag seed.
    */
   private void updateVisionTarget() {
     double now = Timer.getFPGATimestamp();
     for (var result : m_photonCamera.getAllUnreadResults()) {
-      if (!result.hasTargets()) {
-        continue;
-      }
+      if (!result.hasTargets()) continue;
 
       var bestTarget = result.getBestTarget();
       if (bestTarget != null
-          && VisionConstants.FIELD_LAYOUT.getTagPose(bestTarget.getFiducialId()).isPresent()) {
+          && VisionConstants.FIELD_LAYOUT.getTagPose(
+              bestTarget.getFiducialId()).isPresent()) {
         m_lastTagId = bestTarget.getFiducialId();
       }
 
-      // The camera must use the SAME official Welded JSON in PhotonVision UI.
-      // Coprocessor MultiTag is preferred; valid single-tag measurements
-      // provide a fallback when only one AprilTag is visible.
       Optional<EstimatedRobotPose> estimate =
           m_photonPoseEstimator.estimateCoprocMultiTagPose(result);
       boolean multiTag = estimate.isPresent();
 
-      if (!multiTag
-          && bestTarget != null
-          && VisionConstants.FIELD_LAYOUT.getTagPose(bestTarget.getFiducialId()).isPresent()
+      if (estimate.isEmpty() && bestTarget != null
+          && VisionConstants.FIELD_LAYOUT.getTagPose(
+              bestTarget.getFiducialId()).isPresent()
           && bestTarget.getPoseAmbiguity() >= 0.0
-          && bestTarget.getPoseAmbiguity() <= VisionConstants.MAX_SINGLE_TAG_AMBIGUITY
+          && bestTarget.getPoseAmbiguity()
+              <= VisionConstants.MAX_SINGLE_TAG_AMBIGUITY
           && bestTarget.getBestCameraToTarget().getTranslation().getNorm()
               <= VisionConstants.MAX_SINGLE_TAG_DISTANCE_M) {
         estimate = m_photonPoseEstimator.estimateLowestAmbiguityPose(result);
       }
-
       if (estimate.isEmpty()) {
+        m_rejectedVisionCount++;
+        m_visionGateStatus = "NO VALID PNP RESULT";
         continue;
       }
 
       var measurement = estimate.get();
-      Pose3d pose3d = measurement.estimatedPose;
-      Pose2d measuredPose = pose3d.toPose2d();
-      double timestamp = measurement.timestampSeconds;
-      AprilTagFieldLayout layout = VisionConstants.FIELD_LAYOUT;
-      double tolerance = VisionConstants.FIELD_BOUNDS_TOLERANCE_M;
+      double stamp = measurement.timestampSeconds;
+      if (stamp <= m_lastVisionMeasurementTimestamp) continue;
 
-      // Reject invalid/out-of-field/camera-tilt poses and out-of-order frames.
-      if (!Double.isFinite(timestamp)
-          || timestamp <= m_lastVisionMeasurementTimestamp
-          || timestamp > Timer.getFPGATimestamp() + 0.1
-          || timestamp < Timer.getFPGATimestamp() - 1.0
-          || !Double.isFinite(pose3d.getX())
-          || !Double.isFinite(pose3d.getY())
-          || !Double.isFinite(pose3d.getZ())
-          || !Double.isFinite(pose3d.getRotation().getX())
-          || !Double.isFinite(pose3d.getRotation().getY())
-          || !Double.isFinite(pose3d.getRotation().getZ())
-          || Math.abs(pose3d.getZ()) > VisionConstants.MAX_ABS_ESTIMATED_HEIGHT_M
-          || Math.abs(pose3d.getRotation().getX()) > Math.toRadians(25.0)
-          || Math.abs(pose3d.getRotation().getY()) > Math.toRadians(25.0)
-          || measuredPose.getX() < -tolerance
-          || measuredPose.getX() > layout.getFieldLength() + tolerance
-          || measuredPose.getY() < -tolerance
-          || measuredPose.getY() > layout.getFieldWidth() + tolerance) {
+      int used = measurement.targetsUsed == null
+          ? 0 : (int) measurement.targetsUsed.stream()
+              .mapToInt(t -> t.getFiducialId()).distinct().count();
+      double avgDistance = measurement.targetsUsed == null ? Double.NaN
+          : measurement.targetsUsed.stream()
+              .mapToDouble(t -> t.getBestCameraToTarget()
+                  .getTranslation().getNorm())
+              .filter(Double::isFinite).average().orElse(Double.NaN);
+      double ambiguity = bestTarget != null
+          ? bestTarget.getPoseAmbiguity() : Double.NaN;
+      Pose3d rawPose3d = measurement.estimatedPose;
+      Pose2d rawPose = rawPose3d.toPose2d();
+
+      m_lastRawVisionPose = rawPose;
+      m_lastVisionPoseReceivedAt = now;
+      m_lastVisionMeasurementTimestamp = stamp;
+      m_lastVisionUsedTagCount = used;
+      m_poseSolver = multiTag ? "MultiTag" : "SingleTag";
+      m_robotDrive.showVisionPose(rawPose);
+
+      ChassisSpeeds measured = m_robotDrive.getRobotRelativeSpeeds();
+      double linearSpeed = Math.hypot(
+          measured.vxMetersPerSecond, measured.vyMetersPerSecond);
+      var decision = VisionPoseValidator.validate(
+          rawPose3d, stamp, now,
+          m_robotDrive.getPose(), m_robotDrive.isFieldPoseInitialized(),
+          multiTag, used, avgDistance, ambiguity,
+          linearSpeed, measured.omegaRadiansPerSecond,
+          VisionConstants.FIELD_LAYOUT.getFieldLength(),
+          VisionConstants.FIELD_LAYOUT.getFieldWidth(),
+          m_robotDrive.isGyroReady());
+
+      m_lastVisionInnovationMeters = rawPose.getTranslation()
+          .getDistance(m_robotDrive.getPose().getTranslation());
+
+      if (!decision.accepted()) {
+        m_rejectedVisionCount++;
+        m_visionGateStatus = decision.reason();
         continue;
       }
 
-      m_lastRawVisionPose = measuredPose;
-      m_lastVisionMeasurementTimestamp = timestamp;
-      m_lastVisionPoseReceivedAt = Timer.getFPGATimestamp();
-      m_robotDrive.showVisionPose(measuredPose);
-
-      m_poseSolver = multiTag ? "MultiTag" : "SingleTag";
-      // Use ONLY multitag field poses and >=2 distinct alliance HUB tags
-      // for center aiming; the single-tag fallback stays telemetry-only.
-      Optional<DriverStation.Alliance> alliance = DriverStation.getAlliance();
-      if (multiTag && alliance.isPresent()) {
-        DriverStation.Alliance color = alliance.get();
-        long tagCount = measurement.targetsUsed.stream()
-            .mapToInt(target -> target.getFiducialId())
-            .distinct()
-            .filter(id -> HubCenterAlign.isAllianceHubTag(id, color))
-            .count();
-        if (tagCount >= 2) {
-          m_hubCenterAlign.acceptVision(
-              measuredPose, timestamp, m_robotDrive.getHeading(),
-              m_robotDrive.getRobotRelativeSpeeds().omegaRadiansPerSecond,
-              color, (int) tagCount);
-        }
+      if (decision.canInitialize()) {
+        m_latestGoodSeedPose = rawPose;
+        m_latestGoodSeedTimestamp = now;
       }
 
-      // Disabled by default: opt in only after checking camera transform and
-      // raw position on the physical practice field.
-      if (m_visionFusionEntry.getBoolean(false)) {
-        m_robotDrive.addVisionMeasurement(measuredPose, timestamp, multiTag);
+      if (!m_fieldVerifiedEntry.getBoolean(false)) {
+        m_visionGateStatus = "WAITING: VERIFY FIELD JSON/CAMERA MOUNT";
+        continue;
       }
+
+      if (!m_robotDrive.isFieldPoseInitialized()) {
+        m_visionGateStatus = "WAITING: DISABLED POSE INITIALIZATION";
+        continue;
+      }
+
+      if (!m_visionFusionEntry.getBoolean(true)) {
+        m_visionGateStatus = "FUSION DISABLED";
+        continue;
+      }
+
+      m_robotDrive.addVisionMeasurement(
+          rawPose, stamp,
+          decision.xyStdDevMeters(), decision.thetaStdDevRadians());
+      m_acceptedVisionCount++;
+      m_visionGateStatus = decision.reason();
     }
 
-    double poseAgeSeconds = m_lastVisionPoseReceivedAt < 0.0
-        ? -1.0 : now - m_lastVisionPoseReceivedAt;
-    boolean poseFresh = poseAgeSeconds >= 0.0 && poseAgeSeconds <= 0.5;
-    // Explicit one-shot pose initialization, only while Disabled and while a
-    // fresh, vetted raw pose is available. Never auto-reset during a match.
     if (m_visionResetEntry.getBoolean(false)) {
-      if (DriverStation.isDisabled() && poseFresh && m_lastRawVisionPose != null) {
-        m_robotDrive.resetOdometry(m_lastRawVisionPose);
-        m_visionResetStatus = "Applied while Disabled";
+      if (!DriverStation.isDisabled()) {
+        m_visionResetStatus = "REJECTED: DISABLE ROBOT FIRST";
+      } else if (!m_fieldVerifiedEntry.getBoolean(false)) {
+        m_visionResetStatus = "REJECTED: VERIFY FIELD/CAMERA FIRST";
+      } else if (!m_robotDrive.isGyroReady()) {
+        m_visionResetStatus = "REJECTED: NAVX NOT READY";
+      } else if (m_latestGoodSeedPose == null
+          || now - m_latestGoodSeedTimestamp > 0.25) {
+        m_visionResetStatus = "REJECTED: NEED FRESH MULTITAG POSE";
       } else {
-        m_visionResetStatus = "Rejected: Disable and show a valid tag";
+        m_robotDrive.resetOdometry(m_latestGoodSeedPose);
+        m_visionResetStatus = "INITIALIZED FROM VERIFIED MULTITAG POSE";
+        // Wait for the next validated frame before allowing auto-aim.
       }
       m_visionResetEntry.setBoolean(false);
     }
   }
 
-  /** Aim robot +X at alliance HUB center while keeping stick translation. */
+
+
+  /** FRC 135-style point-facing profiled rotation from fused field pose. */
   private double getDriveRotationCommand() {
-    // Refresh tunable aim trim even while manual rotation is selected.
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
-    if (!m_visionAlignEnabled) {
-      return getTriggerRotation();
-    }
+    if (!m_visionAlignEnabled) return getTriggerRotation();
     return m_hubCenterAlign.calculateTurn(
-        m_robotDrive.getHeading(),
-        m_robotDrive.getRobotRelativeSpeeds().omegaRadiansPerSecond,
-        DriverStation.getAlliance());
+        m_robotDrive.getPose(),
+        m_robotDrive.getRobotRelativeSpeeds(),
+        DriverStation.getAlliance(),
+        m_robotDrive.isFieldPoseInitialized()
+            && m_fieldVerifiedEntry.getBoolean(false),
+        m_robotDrive.isGyroReady(),
+        m_robotDrive.hasRecentVision(1.0));
   }
 
   /** Toggle between robot-relative and field-relative translation control. */
@@ -608,7 +641,8 @@ public class RobotContainer {
   /** Toggle PhotonVision AprilTag auto-alignment on/off. */
   private void toggleVisionAlign() {
     m_visionAlignEnabled = !m_visionAlignEnabled;
-    m_hubCenterAlign.reset();
+    if (m_visionAlignEnabled) m_hubCenterAlign.start();
+    else m_hubCenterAlign.stop();
   }
 
   /**
