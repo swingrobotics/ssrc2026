@@ -3,7 +3,25 @@
 Working reference: `intake-subsystem` branch. This file is the team's
 persistent checklist, not a claim of match-readiness.
 
-## Active — Shooter RPM closed-loop implementation
+## Current shooter controls — percent driver output and optional RPM calibration
+- [x] Restore original hold-B manual shooter control as genuine motor OUTPUT %.
+- [x] Drive tab uses `Shooter Output (%)`, default 50%, limited to 75%.
+      Original motor direction is preserved (50% -> -0.50 on leader 9).
+- [x] Preserve follower configuration: 10 same output, 12 inverted.
+- [x] Keep RPM encoder telemetry visible in Drive and Shooter tabs.
+- [x] Reserve closed-loop RPM setpoint control for `Auto Shot Enabled`
+      (teleop) or `Autonomous Use Calibration` (PathPlanner).
+- [x] In PathPlanner without calibration, use the driver % slider for
+      `Auto Shooter Start`; `Auto Shoot` checks >1 second spin-up and
+      >100 measured motor RPM only. It does NOT claim shot accuracy.
+- [x] In PathPlanner with calibration, check closed-loop RPM and hood target.
+- [x] Manual A feeder remains blocked in percent-only mode because the
+      interlock requires a validated RPM target; feeder hardware is not built.
+- [ ] Build and verify code/real robot; validate percent directions safely.
+- [ ] With feeder hardware assembled, decide and validate its interlock
+      strategy for percent and RPM modes before enabling feeding.
+
+## Previous RPM closed-loop implementation (retained for automatic calibration)
 - [x] Replace shooter open-loop duty-cycle command with Spark MAX velocity RPM control.
 - [x] Preserve shooter CAN IDs 9 / 10 / 12 and follower direction setup.
 - [x] Preserve hold-B to run and release-B to stop.
@@ -25,7 +43,8 @@ persistent checklist, not a claim of match-readiness.
 - [x] Publish feeder permission and commanded state in Drive and Shooter tabs.
 - [ ] Build the latest branch successfully and deploy.
 - [ ] Confirm A alone cannot feed and B alone cannot feed.
-- [ ] Confirm A+B waits for RPM then feeds; verify RPM drop suspends feeding.
+- [ ] In calibrated RPM mode, confirm A+B waits for RPM, then feeds;
+      in percent mode, feeder currently remains interlocked off.
 - [ ] Confirm release A/B and Disable each stop feeder promptly.
 - [ ] Tune readiness tolerance/stability window to measured firing recovery.
 - [ ] Verify follower RPM and any jam conditions in a safely supervised test.
@@ -49,7 +68,8 @@ persistent checklist, not a claim of match-readiness.
 - [ ] Obtain TWO real shot measurements (distance, MOTOR RPM, raw hood encoder).
       Defaults (0 RPM, -1 hood) deliberately prohibit automatic motion.
 - [ ] Enter calibration in Shuffleboard; check output on disabled robot first.
-- [ ] Verify readiness, B release, loss of calibration, and disabled behavior.
+- [ ] Verify readiness, B release, loss of calibration, disabled behavior,
+      and switching between open-loop % and closed-loop RPM.
 - [ ] Store calibrated shot values persistently in source after validation.
 - [ ] Stage 2: derive distance from field pose and verified HUB center,
       then make distance-source selection manual / vision; NOT implemented yet.
@@ -61,7 +81,7 @@ persistent checklist, not a claim of match-readiness.
       the existing `TestAuto.auto` and the original path files.
 - [x] Spin up while following `shoot 1` and `shoot 2`; at the end of
       each path, wait at most 2s to check RPM and hood readiness.
-- [x] Default to the Drive `Shooter Target RPM` slider; preserve current
+- [x] Default to the Drive `Shooter Output (%)` slider; preserve current
       hood angle if shot calibration is incomplete.
 - [x] Offer optional `Autonomous Use Calibration` on `Shot Tuning`.
       When enabled, reject invalid shot calibrations and command the
