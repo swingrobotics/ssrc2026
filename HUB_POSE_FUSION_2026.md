@@ -1,0 +1,121 @@
+# REBUILT HUB center alignment — experimental branch
+
+Branch: `hub-pose-fusion-2026` based on `intake-subsystem`
+(commit `0aa15352b6b6ea7f2c99314270354fdf974298ca`).
+The parent branch is unchanged. Development does NOT mean this is
+calibrated or proven accurate on a real robot.
+
+## Architecture
+
+1. PhotonVision `PC_Camera` reports calibrated 2026 **Welded** field poses.
+2. `PhotonPoseEstimator.estimateCoprocMultiTagPose` is preferred.
+   If unavailable, validated `estimateLowestAmbiguityPose` single-tag
+   observations may improve an **already initialized** fused field pose.
+   Any visible field tag may contribute: HUB tag count is NOT a requirement.
+3. `VisionPoseValidator` gates camera timestamps, pose bounds, Z/roll/pitch,
+   tag distance, single-tag ambiguity, gyro readiness, robot motion and
+   disagreement from predicted chassis odometry.
+4. Adaptive translation measurement uncertainty uses target distance and
+   tag count; camera heading uncertainty is very large (1000 rad) so
+   navX gyro dictates short-term rotation. This follows the vision
+   covariance approach in FRC 5024/6328 and FRC 6940.
+5. `DriveSubsystem.SwerveDrivePoseEstimator` updates wheel+navX each 20ms
+   and fuses each vetted, timestamped camera field pose through
+   `addVisionMeasurement`. Its `getPose()` is the single source of
+   truth for both path-following and hub aiming.
+6. `HubCenterAlign` gets the fused robot pose every driver period and
+   computes `atan2(hubY - launcherY, hubX - launcherX)`, adjusted for
+   the physical launcher direction and the operator trim.
+7. A `ProfiledPIDController` with wrapped heading, angular velocity
+   and acceleration limits commands ROBOT rotation. The left stick retains
+   direct translation. The X button toggles aiming. Autonomous PathPlanner,
+   shooter percent output, manual hood, intake and feeder are preserved.
+
+## Required field setup BEFORE automatic rotation
+
+These are essential interlocks, not optional tuning steps:
+
+1. Confirm PhotonVision Output -> **Do Multi-Target Estimation** is ON.
+2. Confirm camera calibration was performed at the actual stream resolution.
+3. Confirm PhotonVision device JSON AND `Constants.VisionConstants.FIELD_LAYOUT`
+   match your actual 2026 Welded vs AndyMark field. The current code uses
+   **Welded**, so do not check `Field Camera Verified` on a differently
+   arranged practice field. Off-field AprilTag props DO NOT define a global
+   field pose unless their positions match the configured JSON exactly.
+4. Physically measure camera X/Y/Z, optical yaw/pitch/roll.
+   Current values: forward 0.31732884884m, left 0m, up 0.40394608582m,
+   roll 0, pitch -25deg, yaw 0. These MUST match actual mounting.
+5. Check alliance from DriverStation. HUB centers are currently provisional
+   X/Y constants: blue (4.625, 4.033)m, red (11.920, 4.033)m.
+   Measure the actual launcher offset relative to robot X/Y; currently
+   set to (0,0). The launch axis yaw currently assumes robot +X.
+6. With the robot DISABLED and gyro ready, ensure a VALID MULTITAG field
+   pose is visible. On `Vision` Shuffleboard tab turn on
+   **Field Camera Verified** ONLY after steps 1-5 are checked.
+7. Toggle **Reset Pose (Disabled)** ON. It clears automatically.
+   Check `Pose Init Status = INITIALIZED FROM VERIFIED MULTITAG POSE`
+   and fused X/Y/heading against surveyed truth.
+8. Keep **Fusion Enabled** ON (default). Camera pose acceptance then
+   continuously corrects odometry. Verify accepted-frame counter increases
+   and rejected-frame counter does not increase rapidly.
+9. With the robot safely secured under adult/team supervision, initially
+   verify **direction/sign of rotation** and then very low-speed field trials.
+   X toggles auto-aim. Aiming requires verified pose, healthy gyro,
+   known alliance and vision accepted in the previous 1.0 seconds.
+   No recent vision -> zero commanded rotation, even if odometry continues.
+10. `Hub Aim Trim (deg)` starts at 0 and clamps to +/-15deg.
+    A trim is NOT a repair for wrong camera calibration/field geometry.
+    Record validated trim and measure launcher yaw mechanically.
+
+## Failure/status inspection
+
+`Vision Gate Status` shows why an observation was rejected:
+- `STALE OR FUTURE FRAME`: check camera time sync/network.
+- `VISION/ODOMETRY POSITION DISAGREE`: verify layout, camera mount,
+  odometry/pinion/wheel size or manual seed.
+- `VISION/NAVX HEADING DISAGREE`: verify navX polarity and 3D yaw.
+- `ROBOT MOVING TOO FAST FOR VISION`: stabilize before calibrating.
+- `WAITING: DISABLED POSE INITIALIZATION`: no trusted global origin yet.
+- `WAITING: VERIFY FIELD JSON/CAMERA MOUNT`: operator confirmation off.
+- `FUSION DISABLED`: dashboard toggle off.
+
+`HUB Align Status` explains refusal to turn: NAVX not ready,
+pose not initialized, camera vision stale, alliance unknown,
+invalid position or HUB too close.
+
+## Tests
+
+Run from project root in the 2026 WPILib VS Code environment:
+
+```powershell
+git switch hub-pose-fusion-2026
+git pull --ff-only origin hub-pose-fusion-2026
+.\gradlew.bat clean test
+.\gradlew.bat build
+```
+
+The JUnit tests verify field-to-HUB geometry, launcher offsets, trim,
+left/right aim while moving, initial MultiTag requirement, single-tag
+fallback, pose outliers, invalid tags and uncertainty scaling.
+
+## Sources actually used
+
+- PhotonVision 2026 MultiTag:
+  https://docs.photonvision.org/en/v2026.3.3/docs/apriltag-pipelines/multitag.html
+- PhotonLib pose estimator:
+  https://docs.photonvision.org/en/v2026.3.2/docs/programming/photonlib/robot-pose-estimator.html
+- WPILib 2026 PoseEstimator:
+  https://github.wpilib.org/allwpilib/docs/release/java/edu/wpi/first/math/estimator/PoseEstimator.html
+- FRC 5024 adaptive covariance:
+  https://github.com/frc5024/Rebuilt/blob/main/src/main/java/frc/robot/subsystems/vision/VisionSubsystem.java
+- FRC 6328 timestamped odometry/vision fusion:
+  https://github.com/Mechanical-Advantage/RobotCode2026Public/blob/main/src/main/java/org/littletonrobotics/frc2026/RobotState.java
+- FRC 6940 field-relative HUB targeting:
+  https://github.com/Team6940/2026Rebuilt/blob/game-dev/src/main/java/frc/robot/subsystems/Drive/Drive.java
+- FRC 135 profiled heading controller:
+  https://github.com/Team135BlackKnights/2026-Rebuilt/blob/drive-CORE/src/main/java/frc/robot/commands/drive/AimToPose.java
+
+Important: This project DOES NOT apply projectile travel-time / lateral
+lead for shooting while translating. It points the launch axis toward
+the stationary HUB center. Shooting-on-the-move trajectory compensation
+requires separate calibration and validation.
