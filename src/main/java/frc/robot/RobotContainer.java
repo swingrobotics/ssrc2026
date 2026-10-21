@@ -478,11 +478,22 @@ public class RobotContainer {
                 || m_autoFeedDeadline < 0.0
                 || Timer.getFPGATimestamp() >= m_autoFeedDeadline),
         Commands.runOnce(() -> {
-          // No ball-exit sensor: finishing the timer only proves the feed
-          // command ended, NOT that every game piece was launched.
+          // No ball-exit sensor: completing the timer does not prove that
+          // every game piece has exited. Distinguish a normal timed feed
+          // from an interlock-aborted feed.
           m_feeder.stopFeeder();
+          if (!DriverStation.isAutonomousEnabled()) {
+            m_autoLastShotResult = "FEED ABORTED: autonomous disabled";
+          } else if (!m_autoFeederEnabledEntry.getBoolean(false)) {
+            m_autoLastShotResult = "FEED ABORTED: feeder disarmed";
+          } else if (!isAutonomousShotSafe()) {
+            m_autoLastShotResult = "FEED ABORTED: robot/shooter/hood not ready";
+          } else if (Timer.getFPGATimestamp() >= m_autoFeedDeadline) {
+            m_autoLastShotResult = "FEED TIMER COMPLETE: fuel exit unverified";
+          } else {
+            m_autoLastShotResult = "FEED STOPPED: check status";
+          }
           m_autoFeedDeadline = -1.0;
-          m_autoLastShotResult = "FEED STOPPED: verify fuel cleared";
           m_autoShooterStatus = m_autoLastShotResult;
         }),
         Commands.waitSeconds(kAutoShootPostFeedPauseSeconds));
