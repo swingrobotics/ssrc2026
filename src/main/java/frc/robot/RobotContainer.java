@@ -671,6 +671,8 @@ public class RobotContainer {
 
   /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
   public void updateDashboard() {
+    // Keep trim preview and its settling reset current even while disabled.
+    m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     updateVisionTarget();
   }
 
