@@ -11,6 +11,8 @@ import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Pose3d;
+import edu.wpi.first.wpilibj.DriverStation.Alliance;
+import java.util.OptionalDouble;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.networktables.GenericEntry;
 import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
@@ -29,6 +31,8 @@ import edu.wpi.first.wpilibj2.command.button.Trigger;
 import frc.robot.Constants.VisionConstants;
 import frc.robot.Constants.FeederConstants;
 import frc.robot.Constants.HoodConstants;
+import frc.robot.Constants.HubConstants;
+import frc.robot.HoodDistanceCalculator.Point;
 import frc.robot.Constants.OIConstants;
 import frc.robot.Constants.ShooterConstants;
 import frc.robot.ShotCalculator.CalibrationPoint;
@@ -91,6 +95,18 @@ public class RobotContainer {
   private final GenericEntry m_shotP2DistanceEntry;
   private final GenericEntry m_shotP2RpmEntry;
   private final GenericEntry m_shotP2HoodEntry;
+  // Distance-only hood mode is INDEPENDENT of shooter % / RPM controls.
+  // Starts OFF until the team's measured hood data and camera pose are verified.
+  private final GenericEntry m_distanceHoodEnabledEntry;
+  private final GenericEntry m_hoodDistanceP1Entry;
+  private final GenericEntry m_hoodEncoderP1Entry;
+  private final GenericEntry m_hoodDistanceP2Entry;
+  private final GenericEntry m_hoodEncoderP2Entry;
+  private double m_hubRawDistance = Double.NaN;
+  private double m_hubFilteredDistance = Double.NaN;
+  private double m_lastHubVisionTimestamp = -1.0;
+  private Optional<Alliance> m_lastHubAlliance = Optional.empty();
+  private String m_hubDistanceStatus = "No valid field pose";
   private boolean m_autoHoodTargetActive = false;
   private boolean m_autoHoodManualOverride = false;
   // Autonomous commands set a request; subsystem default commands own the
@@ -196,6 +212,27 @@ public class RobotContainer {
     shotTab.addBoolean("Hood At Target", m_hood::isAtTargetPosition);
     shotTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
     shotTab.addString("Auto Shot Status", this::getAutoShotStatus);
+    // Enter TWO real (distance, raw encoder position) measurements.
+    // These settings DO NOT change shooter motor output/RPM.
+    m_distanceHoodEnabledEntry =
+        shotTab.add("Distance Hood Enabled", false).getEntry();
+    m_hoodDistanceP1Entry = shotTab.add("Hood Cal 1 Distance (m)", 2.0).getEntry();
+    m_hoodEncoderP1Entry = shotTab.add("Hood Cal 1 Raw Encoder", -1.0).getEntry();
+    m_hoodDistanceP2Entry = shotTab.add("Hood Cal 2 Distance (m)", 3.0).getEntry();
+    m_hoodEncoderP2Entry = shotTab.add("Hood Cal 2 Raw Encoder", -1.0).getEntry();
+    shotTab.addBoolean("Distance Hood Calibration Valid",
+        () -> HoodDistanceCalculator.areValidPair(getHoodDistancePoint1(), getHoodDistancePoint2()));
+    shotTab.addDouble("Raw HUB Center Distance (m)",
+        () -> Double.isFinite(m_hubRawDistance) ? m_hubRawDistance : -1.0);
+    shotTab.addDouble("Filtered HUB Distance (m)",
+        () -> Double.isFinite(getFreshHubDistance()) ? getFreshHubDistance() : -1.0);
+    shotTab.addDouble("Distance Hood Target Raw Encoder",
+        () -> getDistanceHoodTarget().orElse(-1.0));
+    shotTab.addBoolean("Distance Hood Target Ready", this::isDistanceHoodAtTarget);
+    shotTab.addString("Distance Hood Status", this::getDistanceHoodStatus);
+    shotTab.addString("HUB Pose Source", () -> m_hubDistanceStatus);
+    shotTab.addString("Alliance", () -> DriverStation.getAlliance()
+        .map(Enum::name).orElse("UNKNOWN"));
     // When OFF, autonomous uses the driver percent-output slider and holds
     // the hood's current position. When ON, it requires valid RPM calibration.
     m_autoUseCalibratedShotEntry =
@@ -286,27 +323,43 @@ public class RobotContainer {
               boolean autonomous = DriverStation.isAutonomousEnabled();
               double hoodInput = autonomous ? 0.0 : MathUtil.applyDeadband(
                   -m_driverController.getRightY(), OIConstants.kHoodDeadband);
-              boolean teleopAutoRequested = DriverStation.isTeleopEnabled()
-                  && isAutoShotEnabled() && m_driverController.getBButton();
-              if (!m_driverController.getBButton() && !autonomous) {
+              boolean bPressed = m_driverController.getBButton();
+              boolean teleopDistanceRequested = DriverStation.isTeleopEnabled()
+                  && bPressed && isDistanceHoodEnabled();
+              boolean teleopLegacyRequested = DriverStation.isTeleopEnabled()
+                  && bPressed && isAutoShotEnabled();
+              if (!bPressed && !autonomous) {
                 m_autoHoodManualOverride = false;
               }
               if (hoodInput != 0.0) {
-                if (teleopAutoRequested) {
+                if (teleopDistanceRequested || teleopLegacyRequested) {
                   m_autoHoodManualOverride = true;
                 }
                 m_autoHoodTargetActive = false;
                 m_hood.setManual(hoodInput * HoodConstants.TEST_MAX_SPEED);
                 return;
               }
-              Optional<ShotSetpoint> requestedShot = Optional.empty();
+
+              // Live HUB distance wins over old manual-distance shot tuning.
+              // In teleop, right-stick input latches a manual override until
+              // the B button is released, exactly like previous hood tuning.
+              OptionalDouble target = OptionalDouble.empty();
               if (autonomous && m_autoShooterRequested) {
-                requestedShot = m_autoShooterCalibratedSetpoint;
-              } else if (teleopAutoRequested && !m_autoHoodManualOverride) {
-                requestedShot = getShotSolution();
+                if (isDistanceHoodEnabled()) {
+                  target = getDistanceHoodTarget();
+                } else if (m_autoShooterCalibratedSetpoint.isPresent()) {
+                  target = OptionalDouble.of(
+                      m_autoShooterCalibratedSetpoint.get().hoodPosition());
+                }
+              } else if (teleopDistanceRequested && !m_autoHoodManualOverride) {
+                target = getDistanceHoodTarget();
+              } else if (teleopLegacyRequested && !m_autoHoodManualOverride) {
+                Optional<ShotSetpoint> shot = getShotSolution();
+                if (shot.isPresent()) {
+                  target = OptionalDouble.of(shot.get().hoodPosition());
+                }
               }
-              if (requestedShot.isPresent()
-                  && m_hood.setTargetPosition(requestedShot.get().hoodPosition())) {
+              if (target.isPresent() && m_hood.setTargetPosition(target.getAsDouble())) {
                 m_autoHoodTargetActive = true;
                 return;
               }
@@ -509,6 +562,12 @@ public class RobotContainer {
       m_autoShooterStatus = "BLOCKED: hood encoder or calibration mode";
       return;
     }
+    if (isDistanceHoodEnabled()
+        && !HoodDistanceCalculator.areValidPair(
+            getHoodDistancePoint1(), getHoodDistancePoint2())) {
+      m_autoShooterStatus = "BLOCKED: two measured distance/hood points required";
+      return;
+    }
 
     Optional<ShotSetpoint> shot = Optional.empty();
     double rpm = 0.0;
@@ -548,6 +607,11 @@ public class RobotContainer {
         || !m_hood.isHoodReady()) {
       return false;
     }
+    // When distance-hood mode is selected, do not feed until a FRESH
+    // camera pose yields a calibrated target AND hood reaches that target.
+    if (isDistanceHoodEnabled() && !isDistanceHoodAtTarget()) {
+      return false;
+    }
     // Uncalibrated percentage mode is ONLY a spin-up check. It cannot
     // certify accuracy or a specific RPM. Require a minimum elapsed time
     // and a measured rotating shaft rather than claiming RPM readiness.
@@ -561,8 +625,9 @@ public class RobotContainer {
     return m_shooter.isAtSpeed()
         && Math.abs(m_shooter.getTargetRPM() - m_autoShooterTargetRpm) <= 1.0
         && m_hood.isAtTargetPosition()
-        && Math.abs(m_hood.getTargetPosition() - requested.hoodPosition())
-            <= HoodConstants.AUTO_TARGET_TOLERANCE;
+        && (isDistanceHoodEnabled()
+            || Math.abs(m_hood.getTargetPosition() - requested.hoodPosition())
+                <= HoodConstants.AUTO_TARGET_TOLERANCE);
   }
 
   private void stopAutonomousShooter() {
@@ -575,6 +640,123 @@ public class RobotContainer {
     m_autoShooterCalibratedSetpoint = Optional.empty();
     m_shooter.stopShooter();
     m_autoShooterStatus = "STOPPED";
+  }
+
+  private Point getHoodDistancePoint1() {
+    return new Point(
+        m_hoodDistanceP1Entry.getDouble(Double.NaN),
+        m_hoodEncoderP1Entry.getDouble(Double.NaN));
+  }
+
+  private Point getHoodDistancePoint2() {
+    return new Point(
+        m_hoodDistanceP2Entry.getDouble(Double.NaN),
+        m_hoodEncoderP2Entry.getDouble(Double.NaN));
+  }
+
+  private boolean isDistanceHoodEnabled() {
+    return m_distanceHoodEnabledEntry.getBoolean(false);
+  }
+
+  /** Invalidates stale pose/unknown alliance instead of reusing old geometry. */
+  private double getFreshHubDistance() {
+    if (getVisionPoseAgeSeconds() < 0.0
+        || getVisionPoseAgeSeconds() > HubConstants.VISION_MAX_AGE_SECONDS
+        || DriverStation.getAlliance().isEmpty()
+        || !Double.isFinite(m_hubFilteredDistance)) {
+      return Double.NaN;
+    }
+    return m_hubFilteredDistance;
+  }
+
+  private OptionalDouble getDistanceHoodTarget() {
+    return HoodDistanceCalculator.interpolate(
+        getFreshHubDistance(), getHoodDistancePoint1(), getHoodDistancePoint2());
+  }
+
+  /** This confirms encoder position, not that FUEL will land in the HUB. */
+  private boolean isDistanceHoodAtTarget() {
+    OptionalDouble target = getDistanceHoodTarget();
+    return target.isPresent()
+        && m_hood.isAtTargetPosition()
+        && Math.abs(m_hood.getTargetPosition() - target.getAsDouble())
+            <= HoodConstants.AUTO_TARGET_TOLERANCE;
+  }
+
+  private String getDistanceHoodStatus() {
+    if (!isDistanceHoodEnabled()) {
+      return "OFF: shooter percent and manual hood unchanged";
+    }
+    if (!HoodDistanceCalculator.areValidPair(
+        getHoodDistancePoint1(), getHoodDistancePoint2())) {
+      return "BLOCKED: measure two HUB distance / raw hood encoder points";
+    }
+    if (!Double.isFinite(getFreshHubDistance())) {
+      return "BLOCKED: no fresh valid PhotonVision pose/alliance";
+    }
+    if (getDistanceHoodTarget().isEmpty()) {
+      return "BLOCKED: HUB distance outside calibrated interval";
+    }
+    if (!m_hood.isHoodReady() || HoodConstants.CALIBRATION_MODE) {
+      return "BLOCKED: hood encoder not ready";
+    }
+    if (m_autoHoodManualOverride && DriverStation.isTeleopEnabled()) {
+      return "MANUAL OVERRIDE: release B to reset";
+    }
+    if (isDistanceHoodAtTarget()) {
+      return "TARGET REACHED: measured encoder within tolerance";
+    }
+    return "TRACKING: auto moves only during B hold or Auto Shooter Start";
+  }
+
+  /**
+   * Process each newly accepted PhotonVision field pose exactly once.
+   * Camera estimates are NOT odometry (fusion remains independently optional).
+   * Do not hold a stale range across tag loss or alliance changes.
+   */
+  private void updateHubDistance() {
+    Optional<Alliance> alliance = DriverStation.getAlliance();
+    if (alliance.isEmpty()) {
+      m_hubRawDistance = Double.NaN;
+      m_hubFilteredDistance = Double.NaN;
+      m_lastHubVisionTimestamp = -1.0;
+      m_lastHubAlliance = Optional.empty();
+      m_hubDistanceStatus = "WAIT: choose alliance on Driver Station";
+      return;
+    }
+    if (!alliance.equals(m_lastHubAlliance)) {
+      m_hubFilteredDistance = Double.NaN;
+      m_lastHubVisionTimestamp = -1.0;
+      m_lastHubAlliance = alliance;
+    }
+    if (m_lastRawVisionPose == null
+        || !isVisionPoseFresh()
+        || getVisionPoseAgeSeconds() > HubConstants.VISION_MAX_AGE_SECONDS) {
+      m_hubRawDistance = Double.NaN;
+      m_hubFilteredDistance = Double.NaN;
+      m_hubDistanceStatus = "BLOCKED: fresh PhotonVision pose required";
+      return;
+    }
+    // Cannot compute a new distance from an old frame. The validity clock
+    // keeps running even if the cached filtered value is temporarily retained.
+    if (m_lastHubVisionTimestamp >= m_lastVisionMeasurementTimestamp) {
+      return;
+    }
+    OptionalDouble measured = HubDistanceCalculator.calculate(
+        m_lastRawVisionPose, alliance);
+    if (measured.isEmpty()) {
+      m_hubRawDistance = Double.NaN;
+      m_hubFilteredDistance = Double.NaN;
+      m_hubDistanceStatus = "BLOCKED: field pose out of bounds";
+      return;
+    }
+    m_hubRawDistance = measured.getAsDouble();
+    m_hubFilteredDistance = Double.isFinite(m_hubFilteredDistance)
+        ? HubConstants.DISTANCE_FILTER_ALPHA * m_hubRawDistance
+            + (1.0 - HubConstants.DISTANCE_FILTER_ALPHA) * m_hubFilteredDistance
+        : m_hubRawDistance;
+    m_lastHubVisionTimestamp = m_lastVisionMeasurementTimestamp;
+    m_hubDistanceStatus = "FRESH: " + m_poseSolver + " pose -> alliance HUB center";
   }
 
   /** Calibration points use observed MOTOR shaft RPM and raw hood encoder readings. */
@@ -875,6 +1057,7 @@ public class RobotContainer {
   /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
   public void updateDashboard() {
     updateVisionTarget();
+    updateHubDistance();
   }
 
   private double getVisionPoseAgeSeconds() {
