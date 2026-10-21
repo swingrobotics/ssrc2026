@@ -102,5 +102,7 @@ wpi.java.configureTestTasks(test)
 
 // Configure string concat to always inline compile
 tasks.withType(JavaCompile) {
+    // Java files use UTF-8 even when Windows defaults to x-windows-949.
+    options.encoding = 'UTF-8'
     options.compilerArgs.add '-XDstringConcat=inline'
 }
