@@ -236,6 +236,15 @@ public class HoodSubsystem extends SubsystemBase {
         return true;
     }
 
+    /**
+     * Stop chasing an old automatic setpoint when auto mode ends, while
+     * preserving the existing position-hold behavior at the current angle.
+     */
+    public void captureCurrentPosition() {
+        resetHold();
+        setManual(0.0);
+    }
+
     /** Absolute DutyCycleEncoder target, or -1 when no position is requested. */
     public double getTargetPosition() {
         return Double.isFinite(holdTarget) ? holdTarget : -1.0;
