@@ -24,6 +24,7 @@ import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.InstantCommand;
 import edu.wpi.first.wpilibj2.command.RunCommand;
 import edu.wpi.first.wpilibj2.command.button.JoystickButton;
+import edu.wpi.first.wpilibj2.command.button.Trigger;
 import frc.robot.Constants.VisionConstants;
 import frc.robot.Constants.FeederConstants;
 import frc.robot.Constants.HoodConstants;
@@ -56,8 +57,9 @@ public class RobotContainer {
   // The original swerve/vision/autonomous subsystem, plus the ZIP's mechanism subsystems.
   private final DriveSubsystem m_robotDrive = new DriveSubsystem();
   private final ShooterSubsystem m_shooter = new ShooterSubsystem();
-  // Feed only when the shooter leader has reached its target RPM.
-  private final FeederSubsystem m_feeder = new FeederSubsystem(m_shooter::isAtSpeed);
+  // The SHOOTER feeder (CAN 11/14) may feed only after measured flywheel
+  // stability in percent mode or target RPM stability in calibrated mode.
+  private final FeederSubsystem m_feeder = new FeederSubsystem(m_shooter::isReadyToFeed);
   private final HoodSubsystem m_hood = new HoodSubsystem();
   // Creates no motor controllers until both intake CAN IDs are assigned.
   private final IntakeSubsystem m_intake = new IntakeSubsystem();
@@ -79,8 +81,13 @@ public class RobotContainer {
   private boolean m_autoHoodManualOverride = false;
   // Autonomous commands set a request; subsystem default commands own the
   // motors continuously, so the request persists across paths and is always
-  // cleared on end/cancellation. No feeder is activated in this phase.
+  // cleared on end/cancellation. Shooter-feeder actions are separately armed.
   private final GenericEntry m_autoUseCalibratedShotEntry;
+  // Explicitly opt in after confirming CAN 11/14 are the installed
+  // shooter feeder (not the unfinished intake feeder).
+  private final GenericEntry m_autoFeederEnabledEntry;
+  private final GenericEntry m_autoFeedDurationEntry;
+  private double m_autoFeedDeadline = -1.0;
   private boolean m_autoShooterRequested = false;
   private double m_autoShooterTargetRpm = 0.0;
   private double m_autoShooterTargetPercent = 0.0;
@@ -182,6 +189,11 @@ public class RobotContainer {
     shotTab.addBoolean("Autonomous Shooter Running", () -> m_autoShooterRequested);
     shotTab.addBoolean("Autonomous Shot Ready", this::isAutonomousShooterReady);
     shotTab.addString("Autonomous Shooter Status", () -> m_autoShooterStatus);
+    m_autoFeederEnabledEntry = shotTab.add("Autonomous Feeder Enabled", false).getEntry();
+    m_autoFeedDurationEntry = shotTab.add("Autonomous Feed Duration (s)", 0.75)
+        .withWidget(BuiltInWidgets.kNumberSlider)
+        .withProperties(Map.of("min", 0.1, "max", 2.0)).getEntry();
+    shotTab.addBoolean("Autonomous Feeder Active", m_feeder::isFeeding);
     driveTab.addBoolean("Auto Shot Enabled", this::isAutoShotEnabled);
     driveTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
 
@@ -309,9 +321,9 @@ public class RobotContainer {
   }
 
   /**
-   * Autonomous shooting placeholders. Feeder hardware is NOT yet complete,
-   * so "Auto Shoot" only checks readiness and reports the status. No fuel
-   * feeding / ball launch is commanded by these named commands.
+   * PathPlanner's Auto Shoot now operates the installed SHOOTER feeder
+   * (CAN 11 / 14), never the incomplete intake feeder. It only feeds when
+   * explicitly enabled in Shuffleboard and the shooter is ready.
    */
   private void registerAutonomousShooterCommands() {
     NamedCommands.registerCommand("Auto Shooter Start",
@@ -319,15 +331,51 @@ public class RobotContainer {
     NamedCommands.registerCommand("Auto Shoot",
         Commands.sequence(
             Commands.waitUntil(this::isAutonomousShooterReady).withTimeout(2.0),
-            Commands.runOnce(() -> {
-              m_autoShooterStatus = isAutonomousShooterReady()
-                  ? (m_autoShooterCalibratedSetpoint.isPresent()
-                      ? "READY: calibrated RPM/hood; feeder not installed"
-                      : "SPINUP CHECK PASSED: percent mode, no calibrated shot")
-                  : "SKIPPED: shooter/hood not ready within 2s";
-            })));
+            Commands.either(
+                makeAutonomousFeederCommand(),
+                Commands.runOnce(() -> m_autoShooterStatus =
+                    isAutonomousShooterReady()
+                        ? "FEED DISARMED: enable Autonomous Feeder Enabled"
+                        : "SKIPPED: shooter/hood not ready within 2s"),
+                () -> isAutonomousShooterReady()
+                    && m_autoFeederEnabledEntry.getBoolean(false))));
     NamedCommands.registerCommand("Auto Shooter Stop",
         Commands.runOnce(this::stopAutonomousShooter));
+  }
+
+  /** A bounded feed burst, stopped on timeout, readiness loss, or cancellation. */
+  private Command makeAutonomousFeederCommand() {
+    return Commands.sequence(
+        Commands.runOnce(() -> {
+          double requestedSeconds = m_autoFeedDurationEntry.getDouble(0.75);
+          double seconds = Double.isFinite(requestedSeconds)
+              ? MathUtil.clamp(requestedSeconds, 0.1, 2.0) : 0.0;
+          m_autoFeedDeadline = Timer.getFPGATimestamp() + seconds;
+          m_autoShooterStatus = "FEEDING: shooter feeder CAN 11/14";
+        }),
+        Commands.runEnd(
+            () -> {
+              if (DriverStation.isAutonomousEnabled()
+                  && m_autoFeederEnabledEntry.getBoolean(false)
+                  && isAutonomousShooterReady()) {
+                m_feeder.runFeeder(
+                    getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent));
+              } else {
+                m_feeder.stopFeeder();
+              }
+            },
+            m_feeder::stopFeeder,
+            m_feeder)
+            .until(() -> !DriverStation.isAutonomousEnabled()
+                || !m_autoFeederEnabledEntry.getBoolean(false)
+                || !isAutonomousShooterReady()
+                || m_autoFeedDeadline < 0.0
+                || Timer.getFPGATimestamp() >= m_autoFeedDeadline),
+        Commands.runOnce(() -> {
+          m_feeder.stopFeeder();
+          m_autoFeedDeadline = -1.0;
+          m_autoShooterStatus = "FEED COMMAND COMPLETE: verify fuel exited";
+        }));
   }
 
   private void startAutonomousShooter() {
@@ -384,9 +432,7 @@ public class RobotContainer {
     // and a measured rotating shaft rather than claiming RPM readiness.
     if (m_autoShooterCalibratedSetpoint.isEmpty()) {
       return m_shooter.getControlMode().equals("PERCENT")
-          && m_shooter.getOutputPercent() > 0.0
-          && Double.isFinite(m_shooter.getActualRPM())
-          && m_shooter.getActualRPM() >= 100.0
+          && m_shooter.isReadyToFeed()
           && m_autoShooterStartTime >= 0.0
           && Timer.getFPGATimestamp() - m_autoShooterStartTime >= 1.0;
     }
@@ -399,6 +445,8 @@ public class RobotContainer {
   }
 
   private void stopAutonomousShooter() {
+    m_feeder.stopFeeder();
+    m_autoFeedDeadline = -1.0;
     m_autoShooterRequested = false;
     m_autoShooterTargetRpm = 0.0;
     m_autoShooterTargetPercent = 0.0;
@@ -635,9 +683,9 @@ public class RobotContainer {
    * Use this method to define your button->command mappings.
    */
   private void configureButtonBindings() {
-    // Hold A to request feeding; FeederSubsystem allows output only while
-    // the shooter is at RPM. Losing speed or releasing A stops the feeder.
-    new JoystickButton(m_driverController, XboxController.Button.kA.value)
+    // Hold A in TELEOP to request the shooter feeder. Percent output is
+    // allowed only after measured motor speed settles; otherwise it stops.
+    new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getAButton())
         .whileTrue(Commands.runEnd(
             () -> m_feeder.runFeeder(getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent)),
             m_feeder::stopFeeder,
@@ -645,7 +693,7 @@ public class RobotContainer {
 
     // B remains hold-to-spin. Default is the ORIGINAL manual percent output;
     // optional, opt-in Auto Shot mode retains calibrated RPM control.
-    new JoystickButton(m_driverController, XboxController.Button.kB.value)
+    new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
               if (isAutoShotEnabled()) {
