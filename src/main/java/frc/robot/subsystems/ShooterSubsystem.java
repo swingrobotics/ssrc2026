@@ -3,30 +3,21 @@ package frc.robot.subsystems;
 import com.revrobotics.PersistMode;
 import com.revrobotics.ResetMode;
 import com.revrobotics.RelativeEncoder;
-import com.revrobotics.spark.FeedbackSensor;
-import com.revrobotics.spark.SparkBase.ControlType;
-import com.revrobotics.spark.SparkClosedLoopController;
 import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.SparkMax;
 import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.config.SparkMaxConfig;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
-import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.ShooterConstants;
 
 /**
- * Dual-mode control for shooter motor 9 (leader): driver percent output
- * and optional closed-loop velocity RPM for measured distance calibration.
- * Motors 10 and 12 retain their existing hardware follower relationships:
- * 10 follows the leader, 12 follows in the opposite direction.
- *
- * All displayed RPM values refer to MOTOR SHAFT RPM, not shooter wheel RPM
- * when an external gear or belt reduction is present. The follower motors
- * follow the leader OUTPUT; they do not have their own velocity loops.
+ * Percent-output ONLY shooter. Motors 10 and 12 remain hardware followers
+ * of motor 9. The encoder is read solely to detect settled rotation before
+ * feeding, never to command velocity or convert RPM into motor output.
  */
 public class ShooterSubsystem extends SubsystemBase {
   private final SparkMax shooter9 =
@@ -35,79 +26,51 @@ public class ShooterSubsystem extends SubsystemBase {
       new SparkMax(ShooterConstants.SHOOTER_10_ID, MotorType.kBrushless);
   private final SparkMax shooter12 =
       new SparkMax(ShooterConstants.SHOOTER_12_ID, MotorType.kBrushless);
-
-  private final SparkClosedLoopController velocityController =
-      shooter9.getClosedLoopController();
   private final RelativeEncoder shooter9Encoder = shooter9.getEncoder();
-  private final RelativeEncoder shooter10Encoder = shooter10.getEncoder();
-  private final RelativeEncoder shooter12Encoder = shooter12.getEncoder();
 
-  private enum ControlMode { STOPPED, PERCENT, RPM }
+  // Internal encoder safety thresholds, NOT shooter speed control settings.
+  private static final double MIN_MEASURED_SHAFT_RPM = 300.0;
+  private static final double MIN_SPINUP_SECONDS = 0.75;
+  private static final int REQUIRED_SETTLED_CYCLES = 8;
 
-  private ControlMode mode = ControlMode.STOPPED;
-  private double targetRPM = 0.0;
-  private double commandedOutputPercent = 0.0;
-  private int stableCycles = 0;
-  // Percent duty cycle has no exact RPM target. This detects reasonably
-  // steady, measured rotation; it does NOT guarantee a valid scoring shot.
-  private static final double PERCENT_READY_MIN_RPM = 300.0;
-  private static final double PERCENT_READY_MIN_SECONDS = 0.75;
-  private static final int PERCENT_READY_STABLE_CYCLES = 8;
-  private int percentStableCycles = 0;
-  private double lastPercentRPM = Double.NaN;
-  private double percentStartTimestamp = -1.0;
+  private double commandedPercent = 0.0;
+  private double startTimestamp = -1.0;
+  private double previousMeasuredRPM = Double.NaN;
+  private int settledCycles = 0;
 
   public ShooterSubsystem() {
-    SparkMaxConfig shooter9Config = new SparkMaxConfig();
-    shooter9Config.inverted(false)
+    SparkMaxConfig leader = new SparkMaxConfig();
+    leader.inverted(false)
         .idleMode(IdleMode.kCoast)
         .smartCurrentLimit(ShooterConstants.CURRENT_LIMIT_AMPS);
-    shooter9Config.closedLoop
-        .feedbackSensor(FeedbackSensor.kPrimaryEncoder)
-        .pid(ShooterConstants.VELOCITY_KP, 0.0, 0.0)
-        .outputRange(-ShooterConstants.MAX_MOTOR_OUTPUT, ShooterConstants.MAX_MOTOR_OUTPUT);
-    shooter9Config.closedLoop.feedForward.kV(ShooterConstants.VELOCITY_KV);
-    shooter9.configure(shooter9Config, ResetMode.kResetSafeParameters,
+    shooter9.configure(leader, ResetMode.kResetSafeParameters,
         PersistMode.kPersistParameters);
 
-    SparkMaxConfig shooter10Config = new SparkMaxConfig();
-    shooter10Config.follow(shooter9, false)
+    SparkMaxConfig follower10 = new SparkMaxConfig();
+    follower10.follow(shooter9, false)
         .idleMode(IdleMode.kCoast)
         .smartCurrentLimit(ShooterConstants.CURRENT_LIMIT_AMPS);
-    shooter10.configure(shooter10Config, ResetMode.kResetSafeParameters,
+    shooter10.configure(follower10, ResetMode.kResetSafeParameters,
         PersistMode.kPersistParameters);
 
-    SparkMaxConfig shooter12Config = new SparkMaxConfig();
-    shooter12Config.follow(shooter9, true)
+    SparkMaxConfig follower12 = new SparkMaxConfig();
+    follower12.follow(shooter9, true)
         .idleMode(IdleMode.kCoast)
         .smartCurrentLimit(ShooterConstants.CURRENT_LIMIT_AMPS);
-    shooter12.configure(shooter12Config, ResetMode.kResetSafeParameters,
+    shooter12.configure(follower12, ResetMode.kResetSafeParameters,
         PersistMode.kPersistParameters);
 
     stopShooter();
 
-    // SmartDashboard topics do not automatically appear as tiles on the
-    // Shuffleboard Drive tab. Publish live suppliers on a dedicated tab.
-    ShuffleboardTab shooterTab = Shuffleboard.getTab("Shooter");
-    shooterTab.addString("Control Mode", this::getControlMode);
-    shooterTab.addDouble("Command Output (%)", this::getOutputPercent);
-    shooterTab.addDouble("Target RPM", this::getTargetRPM);
-    shooterTab.addDouble("Actual RPM", this::getActualRPM);
-    shooterTab.addDouble("Error RPM", this::getErrorRPM);
-    shooterTab.addDouble("Motor 10 RPM", this::getMotor10RPM);
-    shooterTab.addDouble("Motor 12 RPM", this::getMotor12RPM);
-    shooterTab.addBoolean("At Target RPM", this::isAtSpeed);
-    shooterTab.addBoolean("Feeder Speed Ready", this::isReadyToFeed);
-    shooterTab.addBoolean("Running", this::isRunning);
-
-    publishTelemetry();
+    var shooterTab = Shuffleboard.getTab("Shooter");
+    shooterTab.addDouble("Shooter Command (%)", this::getOutputPercent);
+    shooterTab.addBoolean("Shooter Running", this::isRunning);
+    shooterTab.addBoolean("Feeder Speed Stable", this::isReadyToFeed);
   }
 
   /**
-   * Original operator mode: output is a genuine motor duty-cycle percentage,
-   * not an RPM converted into a percentage. A request of 50 means -0.50 to
-   * the leader, matching the team's original shooting direction.
-   * Clamped to the existing 75% output cap.
+   * Request genuine motor duty-cycle percentage (0-75), preserving original
+   * negative leader direction. Disable or invalid commands always stop.
    */
   public void setOutputPercent(double requestedPercent) {
     if (DriverStation.isDisabled()
@@ -117,171 +80,79 @@ public class ShooterSubsystem extends SubsystemBase {
       return;
     }
 
-    double percent = MathUtil.clamp(requestedPercent, 0.0,
-        ShooterConstants.MAX_MOTOR_OUTPUT * 100.0);
-    if (mode != ControlMode.PERCENT || Math.abs(percent - commandedOutputPercent) > 0.1) {
-      percentStableCycles = 0;
-      lastPercentRPM = Double.NaN;
-      percentStartTimestamp = edu.wpi.first.wpilibj.Timer.getFPGATimestamp();
+    double percent = MathUtil.clamp(
+        requestedPercent, 0.0, ShooterConstants.MAX_MOTOR_OUTPUT * 100.0);
+    if (!isRunning() || Math.abs(percent - commandedPercent) > 0.1) {
+      startTimestamp = Timer.getFPGATimestamp();
+      previousMeasuredRPM = Double.NaN;
+      settledCycles = 0;
     }
-    mode = ControlMode.PERCENT;
-    targetRPM = 0.0;
-    stableCycles = 0;
-    commandedOutputPercent = percent;
+    commandedPercent = percent;
     shooter9.set(ShooterConstants.MOTOR_DIRECTION * percent / 100.0);
-  }
-
-  /**
-   * Optional closed-loop motor-shaft RPM mode for calibrated shots.
-   * Negative motor rotation from the original setup is preserved.
-   * Invalid, zero or disabled requests stop the mechanism.
-   */
-  public void setTargetRPM(double requestedRPM) {
-    if (DriverStation.isDisabled()
-        || !Double.isFinite(requestedRPM)
-        || requestedRPM <= 0.0) {
-      stopShooter();
-      return;
-    }
-
-    double safeRPM = MathUtil.clamp(requestedRPM, 0.0, ShooterConstants.MAX_RPM);
-    if (mode != ControlMode.RPM || Math.abs(safeRPM - targetRPM) > 0.01) {
-      stableCycles = 0;
-    }
-    mode = ControlMode.RPM;
-    commandedOutputPercent = 0.0;
-    percentStableCycles = 0;
-    lastPercentRPM = Double.NaN;
-    percentStartTimestamp = -1.0;
-    targetRPM = safeRPM;
-    velocityController.setSetpoint(
-        ShooterConstants.MOTOR_DIRECTION * targetRPM,
-        ControlType.kVelocity);
   }
 
   public void runShooter() {
     setOutputPercent(ShooterConstants.DEFAULT_OUTPUT_PERCENT);
   }
 
-  public String getControlMode() {
-    return mode.name();
-  }
-
-  /** Percent of full motor-controller output, not percent of target RPM. */
   public double getOutputPercent() {
-    return commandedOutputPercent;
+    return commandedPercent;
   }
 
   public boolean isRunning() {
-    return mode != ControlMode.STOPPED;
+    return commandedPercent > 0.0;
   }
 
-  /** Actual leader shaft RPM, positive in the team's normal shooting direction. */
+  /** For internal safety check only: positive in normal shooting direction. */
   public double getActualRPM() {
     return shooter9Encoder.getVelocity() * ShooterConstants.MOTOR_DIRECTION;
   }
 
-  public double getTargetRPM() {
-    return targetRPM;
-  }
-
-  public double getErrorRPM() {
-    double actualRPM = getActualRPM();
-    return Double.isFinite(actualRPM) ? targetRPM - actualRPM : 0.0;
-  }
-
-  public double getMotor10RPM() {
-    return shooter10Encoder.getVelocity() * ShooterConstants.MOTOR_DIRECTION;
-  }
-
-  public double getMotor12RPM() {
-    return -shooter12Encoder.getVelocity() * ShooterConstants.MOTOR_DIRECTION;
-  }
-
-  /** Ready after stable leader RPM; this does NOT yet gate the feeder. */
-  public boolean isAtSpeed() {
-    return mode == ControlMode.RPM && targetRPM > 0.0
-        && stableCycles >= ShooterConstants.READY_STABLE_CYCLES;
-  }
-
   /**
-   * Feed-readiness for BOTH control modes. RPM mode checks its setpoint;
-   * percent mode merely verifies sustained, reasonably steady rotation.
-   * Percent mode cannot establish a guaranteed RPM for a scoring shot.
+   * Readiness means sustained measured rotation, NOT a guaranteed shot.
+   * We do not maintain a target shaft RPM in this percent-output design.
    */
   public boolean isReadyToFeed() {
-    if (!DriverStation.isEnabled()) {
-      return false;
-    }
-    if (mode == ControlMode.RPM) {
-      return isAtSpeed();
-    }
-    return mode == ControlMode.PERCENT
-        && commandedOutputPercent > 0.0
-        && percentStartTimestamp >= 0.0
-        && edu.wpi.first.wpilibj.Timer.getFPGATimestamp() - percentStartTimestamp
-            >= PERCENT_READY_MIN_SECONDS
-        && percentStableCycles >= PERCENT_READY_STABLE_CYCLES
+    return DriverStation.isEnabled()
+        && isRunning()
+        && startTimestamp >= 0.0
+        && Timer.getFPGATimestamp() - startTimestamp >= MIN_SPINUP_SECONDS
+        && settledCycles >= REQUIRED_SETTLED_CYCLES
         && Double.isFinite(getActualRPM())
-        && getActualRPM() >= PERCENT_READY_MIN_RPM;
+        && getActualRPM() >= MIN_MEASURED_SHAFT_RPM;
   }
 
-  /** Stop the leader; its two hardware followers will stop with it. */
   public void stopShooter() {
-    mode = ControlMode.STOPPED;
-    targetRPM = 0.0;
-    commandedOutputPercent = 0.0;
-    stableCycles = 0;
-    percentStableCycles = 0;
-    lastPercentRPM = Double.NaN;
-    percentStartTimestamp = -1.0;
+    commandedPercent = 0.0;
+    startTimestamp = -1.0;
+    settledCycles = 0;
+    previousMeasuredRPM = Double.NaN;
     shooter9.stopMotor();
   }
 
   @Override
   public void periodic() {
-    if (DriverStation.isDisabled() && isRunning()) {
-      stopShooter();
+    if (DriverStation.isDisabled()) {
+      if (isRunning()) {
+        stopShooter();
+      }
+      return;
+    }
+    double measuredRPM = getActualRPM();
+    if (!isRunning() || !Double.isFinite(measuredRPM)
+        || measuredRPM < MIN_MEASURED_SHAFT_RPM) {
+      settledCycles = 0;
+      previousMeasuredRPM = Double.NaN;
+      return;
     }
 
-    double actualRPM = getActualRPM();
-    if (mode == ControlMode.PERCENT
-        && Double.isFinite(actualRPM)
-        && actualRPM >= PERCENT_READY_MIN_RPM) {
-      // A settled percentage-driven flywheel may vary slightly with voltage.
-      double allowedDelta = Math.max(120.0, Math.abs(actualRPM) * 0.08);
-      percentStableCycles =
-          (Double.isFinite(lastPercentRPM)
-              && Math.abs(actualRPM - lastPercentRPM) <= allowedDelta)
-              ? Math.min(percentStableCycles + 1, PERCENT_READY_STABLE_CYCLES)
-              : 0;
-      lastPercentRPM = actualRPM;
+    double allowedVariation = Math.max(120.0, Math.abs(measuredRPM) * 0.08);
+    if (Double.isFinite(previousMeasuredRPM)
+        && Math.abs(measuredRPM - previousMeasuredRPM) <= allowedVariation) {
+      settledCycles = Math.min(settledCycles + 1, REQUIRED_SETTLED_CYCLES);
     } else {
-      percentStableCycles = 0;
-      lastPercentRPM = Double.NaN;
+      settledCycles = 0;
     }
-    if (mode == ControlMode.RPM && targetRPM > 0.0
-        && Double.isFinite(actualRPM)
-        && Math.abs(targetRPM - actualRPM) <= ShooterConstants.RPM_TOLERANCE) {
-      stableCycles = Math.min(
-          stableCycles + 1, ShooterConstants.READY_STABLE_CYCLES);
-    } else {
-      stableCycles = 0;
-    }
-    publishTelemetry();
-  }
-
-  private void publishTelemetry() {
-    double actualRPM = getActualRPM();
-    SmartDashboard.putString("Shooter Control Mode", getControlMode());
-    SmartDashboard.putNumber("Shooter Command Output (%)", getOutputPercent());
-    SmartDashboard.putNumber("Shooter Target RPM", targetRPM);
-    SmartDashboard.putNumber("Shooter Actual RPM", actualRPM);
-    SmartDashboard.putNumber("Shooter Error RPM", getErrorRPM());
-    SmartDashboard.putNumber("Shooter Motor 10 RPM", getMotor10RPM());
-    SmartDashboard.putNumber("Shooter Motor 12 RPM", getMotor12RPM());
-    SmartDashboard.putBoolean("Shooter Running", isRunning());
-    SmartDashboard.putBoolean("Shooter At Target RPM", isAtSpeed());
-    SmartDashboard.putBoolean("Shooter Feeder Speed Ready", isReadyToFeed());
+    previousMeasuredRPM = measuredRPM;
   }
 }
