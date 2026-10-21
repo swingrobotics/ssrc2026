@@ -208,6 +208,24 @@ public final class Constants {
     public static final double FIELD_BOUNDS_TOLERANCE_M = 0.35;
   }
 
+  /**
+   * Nominal 2026 REBUILT HUB CENTER positions in the always-blue-origin
+   * WPILib FIELD coordinate frame, in meters. These approximate values
+   * are taken from published field geometry; verify against the team's
+   * actual Welded field/official CAD before enabling automatic motion.
+   */
+  public static final class HubConstants {
+    public static final Translation2d BLUE_CENTER_METERS = new Translation2d(4.625, 4.033);
+    public static final Translation2d RED_CENTER_METERS = new Translation2d(11.920, 4.033);
+    // Adjust ONLY after measuring the hood/projectile launch point relative
+    // to robot center. Zero preserves center-to-center planar distance.
+    public static final Translation2d SHOOTER_OFFSET_ROBOT_METERS = new Translation2d();
+    public static final double VISION_MAX_AGE_SECONDS = 0.4;
+    // Low-pass each accepted camera position update; cannot reject all
+    // pose jumps. Inspect source pose in Shuffleboard during calibration.
+    public static final double DISTANCE_FILTER_ALPHA = 0.35;
+  }
+
   public static final class HoodConstants {
     public static final int HOOD_MOTOR_ID = 13;
     public static final int HOOD_ENCODER_DIO = 0;
