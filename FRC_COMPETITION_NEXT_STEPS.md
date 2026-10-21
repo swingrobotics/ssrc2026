@@ -23,6 +23,24 @@ not a successful robot build, drive test or calibrated shooting system.
   to control translation. Triggers control manual rotation when X is OFF.
 - `Vision` Shuffleboard tab displays fresh HUB tag count, heading
   error, alignment status, alliance and raw vision pose.
+- Systematic heading bias can be measured and trimmed via `Hub Aim Trim (deg)`
+  on the Vision tab. Defaults to 0.0, clamps to -15..+15 degrees.
+  Positive asks for MORE COUNTERCLOCKWISE robot heading; negative for
+  MORE CLOCKWISE. The trim is not a replacement for camera extrinsics,
+  2026 Welded field coordinates or physically measured shooter yaw.
+- `Hub Untrimmed Error (deg)` is the target-heading error without trim;
+  `Hub Heading Error (deg)` includes trim. Both can be near zero when
+  vision thinks it is aligned but the actual launcher is mechanically off.
+- `Hub Estimated Heading (deg)`, `Hub Desired Heading (deg)`,
+  `Hub Bearing (deg)`, and `Hub Distance (m)` support calibration.
+- For a consistent stationary misalignment: verify camera pitch/yaw/roll,
+  actual shooter axis and field layout first, then tune +/- 1 degree at a
+  time while the robot is restrained and motion is capped. Repeat from
+  multiple positions and distances. Opposite-sign behavior or trim needed
+  beyond +/- 15 deg requires diagnosis, not a larger adjustment.
+- On code restart, trim defaults to zero: record any validated correction,
+  then implement it in a documented physical launcher offset only after
+  independently verifying the shooter axis.
 - Verify 2026 Welded field version, HUB center constants, camera optical
   mounting pose, navX direction and actual shooter launch axis (+X
   currently assumed) before testing powered automatic rotation.
