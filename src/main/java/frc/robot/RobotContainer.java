@@ -320,6 +320,9 @@ public class RobotContainer {
     if (!m_driverController.getBButton()) {
       return "ARMED: hold B to move hood and spin shooter";
     }
+    if (HoodConstants.CALIBRATION_MODE) {
+      return "BLOCKED: hood calibration mode";
+    }
     if (!m_hood.isHoodReady()) {
       return "BLOCKED: hood encoder not ready";
     }
@@ -497,9 +500,14 @@ public class RobotContainer {
     new JoystickButton(m_driverController, XboxController.Button.kB.value)
         .whileTrue(Commands.runEnd(
             () -> {
-              double rpm = isAutoShotEnabled()
-                  ? getShotSolution().map(ShotSetpoint::motorRpm).orElse(0.0)
-                  : getShooterTargetRPM(m_shooterSpeedEntry);
+              double rpm = getShooterTargetRPM(m_shooterSpeedEntry);
+              if (isAutoShotEnabled()) {
+                // Never spin up automatic settings with an invalid hood sensor
+                // or when the hood is in mechanical calibration mode.
+                rpm = (!HoodConstants.CALIBRATION_MODE && m_hood.isHoodReady())
+                    ? getShotSolution().map(ShotSetpoint::motorRpm).orElse(0.0)
+                    : 0.0;
+              }
               m_shooter.setTargetRPM(rpm);
             },
             m_shooter::stopShooter,
