@@ -1,67 +1,65 @@
 package frc.robot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.wpilibj.DriverStation.Alliance;
 import org.junit.jupiter.api.Test;
 
-/** Only the correct alliance's HUB tags can authorize HUB center aiming. */
+/** Pure geometric tests for the new fused-pose HUB controller. */
 class HubCenterAlignTest {
   @Test
-  void acceptsCorrectAllianceHubTags() {
-    for (int id : new int[] {18, 19, 20, 21, 24, 25, 26, 27}) {
-      assertTrue(HubCenterAlign.isAllianceHubTag(id, Alliance.Blue));
-      assertFalse(HubCenterAlign.isAllianceHubTag(id, Alliance.Red));
-    }
-    for (int id : new int[] {2, 3, 4, 5, 8, 9, 10, 11}) {
-      assertTrue(HubCenterAlign.isAllianceHubTag(id, Alliance.Red));
-      assertFalse(HubCenterAlign.isAllianceHubTag(id, Alliance.Blue));
-    }
+  void aimsFromRobotFieldPoseToHubCenter() {
+    Pose2d robot = new Pose2d(3.0, 2.0, Rotation2d.fromDegrees(20));
+    Rotation2d aim = HubCenterAlign.desiredHeading(
+        robot, new Translation2d(5.0, 4.0),
+        new Translation2d(), Rotation2d.kZero, 0.0);
+    assertEquals(45.0, aim.getDegrees(), 1e-6);
   }
 
   @Test
-  void positiveTrimTurnsTargetCounterclockwise() {
-    assertEquals(
-        Math.toRadians(6.0),
-        HubCenterAlign.desiredHeadingRadians(0.0, 0.0, 6.0),
-        1e-9);
-    assertEquals(
-        Math.toRadians(-6.0),
-        HubCenterAlign.desiredHeadingRadians(0.0, 0.0, -6.0),
-        1e-9);
+  void updatesAimAngleWithLateralTranslation() {
+    Pose2d moved = new Pose2d(3.0, 3.0, Rotation2d.kZero);
+    Rotation2d aim = HubCenterAlign.desiredHeading(
+        moved, new Translation2d(5.0, 4.0),
+        new Translation2d(), Rotation2d.kZero, 0.0);
+    assertEquals(Math.toDegrees(Math.atan2(1.0, 2.0)), aim.getDegrees(), 1e-6);
   }
 
   @Test
-  void launcherYawOffsetAndHeadingWrapping() {
-    assertEquals(
-        Math.toRadians(-10.0),
-        HubCenterAlign.desiredHeadingRadians(
-            Math.toRadians(15.0), Math.toRadians(25.0), 0.0),
-        1e-9);
-    assertEquals(
-        Math.toRadians(-171.0),
-        HubCenterAlign.desiredHeadingRadians(Math.toRadians(179.0), 0.0, 10.0),
-        1e-9);
+  void launcherYawAndTrimAreAppliedWithCorrectSigns() {
+    Pose2d robot = Pose2d.kZero;
+    Rotation2d aim = HubCenterAlign.desiredHeading(
+        robot, new Translation2d(5.0, 0.0),
+        new Translation2d(), Rotation2d.fromDegrees(15), 5.0);
+    assertEquals(-10.0, aim.getDegrees(), 1e-6);
   }
 
   @Test
-  void excessiveTrimIsBoundedAndInvalidTrimResetsToZero() {
-    HubCenterAlign align = new HubCenterAlign();
-    align.setAimTrimDegrees(100.0);
-    assertEquals(15.0, align.getAimTrimDegrees(), 1e-9);
-    align.setAimTrimDegrees(-100.0);
-    assertEquals(-15.0, align.getAimTrimDegrees(), 1e-9);
-    align.setAimTrimDegrees(Double.NaN);
-    assertEquals(0.0, align.getAimTrimDegrees(), 1e-9);
+  void launcherOffsetInFieldSpaceChangesBearing() {
+    Pose2d robot = new Pose2d(1.0, 1.0, Rotation2d.fromDegrees(90));
+    Rotation2d aim = HubCenterAlign.desiredHeading(
+        robot, new Translation2d(4.0, 4.0),
+        new Translation2d(1.0, 0.0), Rotation2d.kZero, 0.0);
+    assertEquals(Math.toDegrees(Math.atan2(2.0, 3.0)), aim.getDegrees(), 1e-6);
   }
 
   @Test
-  void ignoresNonHubTags() {
-    for (int id : new int[] {-1, 0, 1, 6, 13, 17, 28, 99}) {
-      assertFalse(HubCenterAlign.isAllianceHubTag(id, Alliance.Blue));
-      assertFalse(HubCenterAlign.isAllianceHubTag(id, Alliance.Red));
-    }
+  void anglesWrapContinuously() {
+    Rotation2d aim = HubCenterAlign.desiredHeading(
+        Pose2d.kZero, new Translation2d(-1.0, 0.01),
+        new Translation2d(), Rotation2d.kZero, 12.0);
+    assertTrue(aim.getDegrees() < -165.0);
+  }
+
+  @Test
+  void redAndBlueUseCorrectHubCoordinates() {
+    assertEquals(Constants.HubConstants.RED_CENTER_METERS,
+        HubCenterAlign.hubForAlliance(Alliance.Red));
+    assertEquals(Constants.HubConstants.BLUE_CENTER_METERS,
+        HubCenterAlign.hubForAlliance(Alliance.Blue));
   }
 }
