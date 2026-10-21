@@ -667,6 +667,7 @@ public class RobotContainer {
             && m_fieldVerifiedEntry.getBoolean(false),
         m_robotDrive.isGyroReady(),
         m_robotDrive.hasRecentVision(1.0));
+    return m_lastHubTurnOutput;
   }
 
   /** Toggle between robot-relative and field-relative translation control. */
