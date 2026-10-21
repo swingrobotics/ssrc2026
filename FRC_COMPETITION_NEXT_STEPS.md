@@ -16,9 +16,20 @@ not a successful robot build, drive test or calibrated shooting system.
   latency; translation is updated on each new valid camera pose.
 - Automatically commands ZERO rotation after stale frames (>0.30s),
   unknown/wrong alliance or invalid gyro/speed telemetry.
-- Initial turn P=1.8, D=0.18, max normalized turn=0.25,
-  heading tolerance=1.5 deg and settle time=0.20s:
-  all preliminary tunings requiring safe real-robot tests.
+- Initial turn P=1.8, D=0.18, max normalized turn=0.16
+  (lowered during anti-jitter testing), heading tolerance=1.5 deg,
+  3-degree aligned hysteresis and settle time=0.20s.
+  All are preliminary tunings requiring safe real-robot tests.
+- To reduce shaking on 2->3 visible tags, the controller now rejects
+  implausible camera field-pose position/heading jumps, low-pass filters
+  valid robot position, anchors field heading to smoothly corrected navX
+  yaw and compensates gyro capture time using estimated angular velocity.
+  Valid turn commands also ramp instead of reversing instantly.
+- Vision diagnostics: `Hub Vision Filter Status`,
+  `Hub Rejected Pose Frames`, `Hub Pose Step (m)`, and
+  `Hub Heading Innovation (deg)`. A growing rejected count when a
+  third tag enters view is evidence of inconsistent pose estimation,
+  NOT proof that the PID tuning is wrong.
 - X toggles HUB CENTER align. During alignment, the left stick continues
   to control translation. Triggers control manual rotation when X is OFF.
 - `Vision` Shuffleboard tab displays fresh HUB tag count, heading
