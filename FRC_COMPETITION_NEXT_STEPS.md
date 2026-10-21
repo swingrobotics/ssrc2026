@@ -3,6 +3,26 @@
 Working reference: `intake-subsystem` branch. This file is the team's
 persistent checklist, not a claim of match-readiness.
 
+## Shooter-side feeder available — autonomous feeding added, not field-tested
+- [x] Correction from team: shooter-side feeder WORKS; only the
+      INTAKE-SIDE feeder / intake transport is unfinished.
+- [x] Existing `FeederSubsystem` is assumed to represent shooter feeder
+      CAN 11 leader and CAN 14 inverted follower. **Verify wiring before enabling.**
+- [x] Permit teleop A+B feeding in manual % shooter mode once motor RPM
+      has been measured and reasonably stable for the safety dwell.
+      RPM-calibrated mode still uses target-RPM stability.
+- [x] PathPlanner `Auto Shoot` now checks shooter/hood readiness,
+      then commands shooter-side feeder for a bounded burst (0.1–2.0 s).
+- [x] Require explicit `Shot Tuning → Autonomous Feeder Enabled`
+      (defaults OFF), with `Autonomous Feed Duration (s)` (default 0.75).
+- [x] Stop feeder when shot command ends, readiness is lost, or auto
+      stops/is interrupted; do not command unfinished intake feeder.
+- [ ] Confirm CAN 11 and 14 are installed SHOOTER-feeder motors.
+- [ ] Build successfully and confirm teleop A+B and autonomous feed
+      on the safely supervised physical robot. Code is untested.
+- [ ] Tune actual feeding duration, output %, percent-spin stabilization,
+      and confirm that a ball actually exits; there is no exit sensor.
+
 ## Current shooter controls — percent driver output and optional RPM calibration
 - [x] Restore original hold-B manual shooter control as genuine motor OUTPUT %.
 - [x] Drive tab uses `Shooter Output (%)`, default 50%, limited to 75%.
@@ -15,11 +35,10 @@ persistent checklist, not a claim of match-readiness.
       `Auto Shooter Start`; `Auto Shoot` checks >1 second spin-up and
       >100 measured motor RPM only. It does NOT claim shot accuracy.
 - [x] In PathPlanner with calibration, check closed-loop RPM and hood target.
-- [x] Manual A feeder remains blocked in percent-only mode because the
-      interlock requires a validated RPM target; feeder hardware is not built.
+- [x] In percent mode, teleop A feeder is interlocked by measured stable
+      flywheel speed; neither A alone nor B alone should command feeding.
 - [ ] Build and verify code/real robot; validate percent directions safely.
-- [ ] With feeder hardware assembled, decide and validate its interlock
-      strategy for percent and RPM modes before enabling feeding.
+- [ ] Validate shooter-feeder interlocks and autonomous feed timing on robot.
 
 ## Previous RPM closed-loop implementation (retained for automatic calibration)
 - [x] Replace shooter open-loop duty-cycle command with Spark MAX velocity RPM control.
@@ -36,15 +55,16 @@ persistent checklist, not a claim of match-readiness.
 - [ ] Verify recovery time after a shot and adequate current/voltage under load.
 
 ## Shooter / feeder RPM interlock (code added; hardware validation pending)
-- [x] Feed only when shooter leader reports stable target RPM.
+- [x] Feed only when shooter leader reports stable RPM target (RPM mode)
+      or sufficiently settled measured rotation (% mode).
 - [x] Hold A to request feed, hold B to spin up, preserve both button mappings.
 - [x] Stop feed automatically if RPM falls, B is released, or robot is disabled.
 - [x] Resume feed once RPM recovers ONLY while the operator continues holding A.
 - [x] Publish feeder permission and commanded state in Drive and Shooter tabs.
 - [ ] Build the latest branch successfully and deploy.
 - [ ] Confirm A alone cannot feed and B alone cannot feed.
-- [ ] In calibrated RPM mode, confirm A+B waits for RPM, then feeds;
-      in percent mode, feeder currently remains interlocked off.
+- [ ] Confirm A+B waits for stable measured RPM in percent mode
+      or calibrated RPM in RPM mode, then feeds.
 - [ ] Confirm release A/B and Disable each stop feeder promptly.
 - [ ] Tune readiness tolerance/stability window to measured firing recovery.
 - [ ] Verify follower RPM and any jam conditions in a safely supervised test.
@@ -88,22 +108,25 @@ persistent checklist, not a claim of match-readiness.
       snapshotted calibrated RPM plus hood setpoint.
 - [x] Stop motor on named Stop and finallyDo when the auto completes or
       is interrupted; report status on the `Shot Tuning` tab.
-- [x] Do not command feeder hardware: the mechanism is not built.
-      `Auto Shoot` is an RPM/hood readiness CHECK, not a ball launch.
+- [x] Auto Shoot now optionally runs the completed shooter feeder
+      (CAN 11/14) after readiness and explicit operator arming.
+      An actual ball launch has not yet been verified.
 - [ ] Verify Java build and inspect PathPlanner GUI named commands / auto chooser.
 - [ ] Confirm motor and hood behavior in a supervised mechanism check.
 - [ ] Re-time and validate paths: current total route may exceed 20-second auto.
-- [ ] Once feeder mechanism is built and approved: add a gated, time-bounded
-      feeder actuation with early stop on loss of RPM or hood readiness.
+- [x] Code includes gated, time-bounded shooter-feeder actuation
+      with stop on RPM/hood readiness loss; still requires hardware tests.
 - [ ] After shot calibration: verify calibrated autonomous position control,
       safe shot distances and repeatable accuracy.
 
 ## Remaining planned tasks (in priority order)
-1. **Intake-to-shooter FUEL flow:** Verify roller direction, feed continuity,
-   avoid jams and overfeeding, and test with multiple game pieces.
-2. **Shooter + feeder + hood integration:** Shooter-to-feeder RPM gating is
-   implemented. Hood target/angle confirmation is NOT yet connected;
-   add abort/stop behavior for fully automated firing.
+1. **Intake-to-shooter FUEL flow:** INTAKE-SIDE feeder is not completed.
+   When assembled, verify roller direction, transfer continuity, prevent jams
+   and overfeeding, and test with multiple game pieces.
+2. **Shooter + shooter-feeder + hood integration:** Auto feeding checks
+   calibrated hood target when enabled. In manual % mode, hood readiness
+   means the encoder is healthy, not that shot trajectory is calibrated.
+   Confirm wiring, timer, abort/stop, and actual firing in hardware tests.
 3. **Distance-based shooting calibration:** Record hub distance, actual
    flywheel RPM, hood encoder positions/angles and accuracy; implement
    data-backed setpoint interpolation.
