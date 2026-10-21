@@ -19,8 +19,8 @@ import java.util.function.BooleanSupplier;
  * Two-motor feeder (11 leader, 14 inverted follower).
  *
  * This is the shooter-side feeder (CAN 11 leader, CAN 14 follower).
- * The upstream supplier checks either measured, settled flywheel rotation
- * in duty-cycle mode or stable target RPM in calibrated mode.
+ * The upstream supplier checks measured, settled flywheel rotation
+ * while the shooter is controlled by motor output PERCENT only.
  * If readiness is lost or the robot is disabled, the feeder stops.
  * A request is required: teleop A button or explicitly armed autonomous.
  * Merely reaching flywheel speed does not start feeding.
