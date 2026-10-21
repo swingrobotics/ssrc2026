@@ -18,11 +18,12 @@ import java.util.function.BooleanSupplier;
 /**
  * Two-motor feeder (11 leader, 14 inverted follower).
  *
- * The feeder is interlocked with a supplied shooter-ready condition:
- * the shooter must be at its target RPM before any feeder output is allowed.
+ * This is the shooter-side feeder (CAN 11 leader, CAN 14 follower).
+ * The upstream supplier checks either measured, settled flywheel rotation
+ * in duty-cycle mode or stable target RPM in calibrated mode.
  * If readiness is lost or the robot is disabled, the feeder stops.
- * The operator must still hold A to request feed; the feeder cannot start
- * solely because the shooter reaches its target speed.
+ * A request is required: teleop A button or explicitly armed autonomous.
+ * Merely reaching flywheel speed does not start feeding.
  */
 public class FeederSubsystem extends SubsystemBase {
   private final SparkMax feeder11 =
@@ -60,10 +61,8 @@ public class FeederSubsystem extends SubsystemBase {
   }
 
   /**
-   * Feed at the requested duty cycle ONLY while the shooter is at target RPM.
-   * If the shooter slows below tolerance, output is stopped immediately on
-   * the next command/periodic cycle and automatically resumes when ready
-   * if the operator continues holding the feed button.
+   * Feed at the requested duty cycle only while the shooter ready supplier
+   * returns true. Lost readiness stops output on the next 20ms cycle.
    */
   public void runFeeder(double output) {
     if (!Double.isFinite(output) || !isFeedAllowed()) {
