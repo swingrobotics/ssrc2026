@@ -1,102 +1,80 @@
-# FRC 2026 REBUILT — current configuration & next checks
+# FRC 2026 REBUILT — active software state
 
-Branch: `intake-subsystem`. This is a current workflow checklist, not a
-claim that robot code has been compiled or field-tested.
+Branch: `intake-subsystem`. This document describes code status only,
+not a successful robot build, drive test or calibrated shooting system.
 
-## Shooter + hood: clean fixed-RPM / minimum–maximum distance workflow
+## Current priority: multi-AprilTag HUB CENTER aiming
 
-Only ONE calibration path remains in `RobotContainer`:
-a single fixed motor-shaft RPM and two measured distance/hood endpoints.
-The old per-distance RPM interpolation and its `ShotCalculator` source/tests
-have been removed. The measured-distance `HoodDistanceCalculator` is retained.
+- `HubCenterAlign.java`: computes rotation toward the alliance HUB
+  CENTER field coordinates rather than the yaw of a single AprilTag.
+- Requires a valid PhotonVision coprocessor multi-tag field-pose result
+  with >=2 distinct tags actually USED in the pose solution from the
+  correct alliance's HUB. A single tag NEVER enables center turning.
+- Red HUB tag IDs: 2,3,4,5,8,9,10,11.
+  Blue HUB tag IDs: 18,19,20,21,24,25,26,27.
+- Uses the vetted camera field pose and gyro heading delta to reduce
+  latency; translation is updated on each new valid camera pose.
+- Automatically commands ZERO rotation after stale frames (>0.30s),
+  unknown/wrong alliance or invalid gyro/speed telemetry.
+- Initial turn P=1.8, D=0.18, max normalized turn=0.25,
+  heading tolerance=1.5 deg and settle time=0.20s:
+  all preliminary tunings requiring safe real-robot tests.
+- X toggles HUB CENTER align. During alignment, the left stick continues
+  to control translation. Triggers control manual rotation when X is OFF.
+- `Vision` Shuffleboard tab displays fresh HUB tag count, heading
+  error, alignment status, alliance and raw vision pose.
+- Verify 2026 Welded field version, HUB center constants, camera optical
+  mounting pose, navX direction and actual shooter launch axis (+X
+  currently assumed) before testing powered automatic rotation.
+- `Fusion Enabled` remains OFF by default and independent of aiming.
 
-### Driver controls (unchanged)
-- B held: spin shooter. By default this uses the `Drive` tab's
-  `Shooter Output (%)` (50% default, 75% output limit).
-- A held: shooter-side feeder (CAN 11 leader, 14 inverted follower),
-  interlocked by shooter readiness. Releasing A stops feeding.
-- Right stick Y: manually adjust hood. Release: existing position hold.
-- LB held: intake rollers (CAN IDs still need assignment).
-- D-pad up/down: rack-and-pinion intake arm (CAN 15 currently configured;
-  verify physical direction, end limits and motor hardware).
-- X: AprilTag auto alignment toggle. Y: field-relative mode toggle.
-- RB: swerve X-lock. START: zero navX heading.
+## Shooter / feeder / hood after cleanup
 
-### Small Shuffleboard layout
-- `Drive`: drive speed, manual shooter output %, actual shooter RPM,
-  feeder speed %, feeder active, drive toggles and PathPlanner auto chooser.
-- `Shooter`: target/actual motor-shaft RPM, control mode, follower RPMs,
-  flywheel readiness. `Feeder` widgets come from `FeederSubsystem`.
-- `Hood`: raw duty-cycle encoder, automatic/hold target, position ready,
-  safe current/limit signals.
-- `Shot Tuning`:
-  - `Fixed RPM Enabled` (OFF default)
-  - `Fixed Shooter RPM` (0 = invalid; must be measured)
-  - `Fixed RPM Valid`
-  - `Distance Hood Enabled` (OFF default)
-  - `Min Shoot Distance (m)`, `Hood at Min Distance`
-  - `Max Shoot Distance (m)`, `Hood at Max Distance`
-  - `Hood Calibration Valid`, `Calculated Hood Target`,
-    `Hood At Distance Target`, `Shot Setup Status`
-  - `Autonomous Feeder Enabled` (OFF default),
-    `Autonomous Feed Duration (s)` (0.75 s initial),
-    autonomous shot status and last result.
-- `Vision`: PhotonVision raw pose and freshness, HUB center distance
-  and alliance, optional vision fusion/reset.
-- `Debug`: detailed field/vision/drive telemetry.
-- `Intake Arm`: arm motor output/current/position; independent of shooter.
-- Old `Shot Tuning` widgets may remain in a previously saved Shuffleboard
-  dashboard layout. Remove old widgets/rebuild that tab in the client after
-  deploying. Removed topics are not recreated by the new code.
+- All shooter motor commands (B teleop and PathPlanner auto) are
+  DIRECT OUTPUT PERCENT, not target RPM or variable RPM calibration.
+- Drive: `Shooter Output (%)` from 0 to 75, default 50;
+  `Feeder Speed (%)` separate and unchanged.
+- Shooter subsystem CAN 9 leader, 10 same-direction follower,
+  12 opposite-direction follower.
+- Internal shooter encoder measurement is used ONLY to decide
+  if actual rotation is reasonably settled before feeding;
+  it is not a velocity PID controller or RPM setpoint.
+- Shooter feeder CAN 11 leader and CAN 14 inverted follower.
+  Teleop A requests feeding, and feeder stops if shooter
+  readiness is lost or robot is disabled.
+- Hood CAN 13 and DIO 0 retains right-stick manual movement and
+  current-position hold on release. No distance-based target
+  is commanded in the CURRENT RobotContainer.
+- Old RPM and uncalibrated hood-distance controls were removed from
+  RobotContainer/Shot Tuning. Do not enable abandoned dashboard widgets.
+- NamedCommands preserved: `Auto Shooter Start`, `Auto Shoot`,
+  `Auto Shooter Stop`. The auto shot waits for stationary chassis
+  and shooter readiness, with explicit feeder arm OFF by default.
+- PathPlanner `TestAutoWithShooter.auto` and existing paths retained;
+  shots are sequential between paths and not while-driving event markers.
 
-### Calibration sequence — not performed yet
-1. Keep `Fixed RPM Enabled = false` and `Distance Hood Enabled = false`
-   for normal manual percent-output shooting.
-2. In a supervised test, pick ONE stable leader motor-shaft RPM. Enable
-   `Fixed RPM Enabled` and enter `Fixed Shooter RPM`. Confirm B-hold
-   controls a stable measured shaft RPM, within current/output limits.
-   Keep `Distance Hood Enabled = false` during these manual hood tests.
-3. At that SAME fixed RPM, measure a repeatably successful **minimum**
-   shooting distance and raw hood encoder position, then a repeatably
-   successful **maximum** shooting distance and raw hood encoder position.
-   Input those four measured values; no defaults represent valid shots.
-4. Verify PhotonVision uses the 2026 Welded AprilTag layout, camera
-   transform and selected alliance; confirm HUB-center distances versus
-   physical measurement. HUB X/Y and robot-to-launcher offsets have not
-   been physically checked.
-5. Only after the previous checks, enable `Distance Hood Enabled`.
-   Within the measured min/max range, B-hold / autonomous spin-up tracks
-   the calculated hood target. Fixed RPM stays constant; never extrapolate.
-6. Interlocks require measured shooter RPM stability and actual hood
-   arrival before distance-mode feeding. Failed/stale camera poses, out-
-   of-range requests and invalid calibration prevent distance-mode feeding.
-   If the sample two-point straight-line relation misses shots in the
-   middle, gather more real calibration points and replace the model.
+## Before use
 
-### Unfinished / unverified
-- [ ] Run `.\gradlew.bat test` and `.\gradlew.bat build` on the WPILib
-      2026 project, repair errors before deploying.
-- [ ] Verify CAN IDs, direction, real follower RPM, shooter current,
-      leader RPM control gains and hood travel/limit behavior.
-- [ ] Verify full robot hardware readiness, battery sag and shot
-      consistency at fixed RPM after repeated fuel impacts.
-- [ ] Verify fixed RPM mode B hold stops on B release and Disable;
-      percent mode remains unchanged with both toggles OFF.
-- [ ] Verify measured HUB distance freshness and out-of-range blocking.
-- [ ] Verify manual hood override with right stick and target hold after
-      losing PhotonVision estimates.
-- [ ] Verify `Auto Shoot` is SEQUENTIAL between paths (NOT a driving event
-      marker), waits for stopped chassis (<=0.10 m/s, <=0.15 rad/s held 0.25s),
-      and stops feeder on loss of readiness or interruption.
-- [ ] Verify `TestAutoWithShooter` fits match auto duration and that
-      both shooting paths finish at Goal End Velocity = 0 m/s.
-- [ ] No fuel exit sensor yet; a completed feeder timer does not guarantee
-      every FUEL was launched.
-- [ ] Intake-to-shooter transfer feeder unfinished; intake rollers require
-      real CAN IDs. Intake arm CAN 15 must be verified with end-stop safety.
-- [ ] Continue HUB center auto aiming, field pose/vision fusion validation,
-      trench clearance, and full autonomous match testing.
+- [ ] Run Windows WPILib 2026 `.\gradlew.bat test` and `.\gradlew.bat build`.
+- [ ] Validate navX yaw sign and shooter/front orientation while lifted,
+      then test small align rotations with team supervision.
+- [ ] Confirm PhotonVision uses the exact same 2026 REBUILT Welded
+      tag layout, and calibrate camera roll/pitch/yaw and gyro alignment.
+- [ ] Confirm visible HUB tag IDs and `measurement.targetsUsed` reflect
+      at least two valid HUB targets from a single pose estimate.
+- [ ] At known field locations, compare reported robot pose and HUB
+      center direction to measured truth, for both alliances.
+- [ ] Test lost tag frames, unknown alliance, disabled robot, and
+      movement with left stick; reject unstable or opposite-direction turns.
+- [ ] Check shooter CAN IDs, original negative output direction,
+      follower directions, current draw, feeder permissive behavior,
+      hood limit and hold torque with adult/team supervision.
+- [ ] Keep `Autonomous Feeder Enabled` OFF until all motor and
+      mechanical checks pass. Fuel-exit sensor is not present.
+- [ ] After center aim works, separately measure a fixed output percent
+      and near/far successful shooting distances and hood positions.
+- [ ] Intake roller CAN IDs are not assigned, and intake arm
+      CAN 15/end-stop mechanism requires verification.
 
-Note: `Fixed Shooter RPM` represents shooter leader MOTOR SHAFT RPM,
-not flywheel surface speed if belts/gearing are used. Current nominal
-hood encoder bounds remain 0.196..0.410; do not move beyond safe real limits.
+Important: An `ALIGNED` signal confirms a vision-derived heading
+within its tolerance, not shot accuracy or a calibrated hood trajectory.
