@@ -529,7 +529,7 @@ public class RobotContainer {
       Optional<DriverStation.Alliance> alliance = DriverStation.getAlliance();
       if (multiTag && alliance.isPresent()) {
         DriverStation.Alliance color = alliance.get();
-        long tagCount = result.getTargets().stream()
+        long tagCount = measurement.targetsUsed.stream()
             .mapToInt(target -> target.getFiducialId())
             .distinct()
             .filter(id -> HubCenterAlign.isAllianceHubTag(id, color))
