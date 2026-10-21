@@ -97,6 +97,7 @@ public class RobotContainer {
   private String m_autoShooterStatus = "Idle";
   private final GenericEntry m_visionFusionEntry;
   private final GenericEntry m_visionResetEntry;
+  private final GenericEntry m_hubAimTrimEntry;
   private double m_lastTagId = -1.0;
   private String m_poseSolver = "None";
   private String m_visionResetStatus = "Not requested";
@@ -164,6 +165,21 @@ public class RobotContainer {
     visionTab.addBoolean("Hub Center Aligned",
         () -> m_visionAlignEnabled && m_hubCenterAlign.isAligned(DriverStation.getAlliance()));
     visionTab.addString("Hub Center Align Status", m_hubCenterAlign::getStatus);
+    // Compensate a VERIFIED constant launcher/vision heading bias.
+    // Positive trim commands a more counterclockwise aim; negative clockwise.
+    // Zero is always the safe starting point; do not blindly dial in an angle.
+    m_hubAimTrimEntry = visionTab.add("Hub Aim Trim (deg)", 0.0)
+        .withWidget(BuiltInWidgets.kNumberSlider)
+        .withProperties(Map.of("min", -15.0, "max", 15.0)).getEntry();
+    visionTab.addDouble("Hub Trim Applied (deg)", m_hubCenterAlign::getAimTrimDegrees);
+    visionTab.addDouble("Hub Untrimmed Error (deg)",
+        m_hubCenterAlign::getUntrimmedHeadingErrorDegrees);
+    visionTab.addDouble("Hub Estimated Heading (deg)",
+        m_hubCenterAlign::getEstimatedHeadingDegrees);
+    visionTab.addDouble("Hub Desired Heading (deg)",
+        m_hubCenterAlign::getDesiredHeadingDegrees);
+    visionTab.addDouble("Hub Bearing (deg)", m_hubCenterAlign::getHubBearingDegrees);
+    visionTab.addDouble("Hub Distance (m)", m_hubCenterAlign::getHubDistanceMeters);
     visionTab.addDouble("Tag ID", () -> m_lastTagId);
     visionTab.addBoolean("Pose Fresh", this::isVisionPoseFresh);
     visionTab.addDouble("Raw Pose X (m)",
@@ -567,6 +583,8 @@ public class RobotContainer {
 
   /** Aim robot +X at alliance HUB center while keeping stick translation. */
   private double getDriveRotationCommand() {
+    // Refresh tunable aim trim even while manual rotation is selected.
+    m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     if (!m_visionAlignEnabled) {
       return getTriggerRotation();
     }
