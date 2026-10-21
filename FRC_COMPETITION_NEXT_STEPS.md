@@ -31,6 +31,29 @@ persistent checklist, not a claim of match-readiness.
 - [ ] Verify follower RPM and any jam conditions in a safely supervised test.
 - [ ] Add hood-at-target interlock after hood target setpoints are implemented.
 
+## Manual-distance shot tuning — stage 1 (code implemented, untested)
+- [x] Add validated two-point distance lookup with linear interpolation (no extrapolation).
+- [x] Keep manual RPM and manual hood operation as the default (Auto Shot Enabled = false).
+- [x] Add Shot Tuning tab: manual distance, two measured calibration points,
+      calculated motor RPM/hood encoder position, readiness and status.
+- [x] Use B to command calculated RPM and bounded hood target while in auto mode.
+- [x] Preserve right-stick priority; using the stick during auto latches hood
+      manual override until B is released and pressed again.
+- [x] Cancel old hood goal and hold present encoder position when auto ends.
+- [x] Reject missing, invalid or out-of-range calibration; block shooter spin-up
+      when the hood encoder is invalid / calibration mode is enabled.
+- [x] Add pure JUnit tests for interpolation and invalid inputs.
+- [ ] Run `./gradlew test` and Build Robot Code on the WPILib 2026 computer.
+- [ ] Validate hood encoder target motion / min-max and operator override
+      in a supervised, safe mechanism setup.
+- [ ] Obtain TWO real shot measurements (distance, MOTOR RPM, raw hood encoder).
+      Defaults (0 RPM, -1 hood) deliberately prohibit automatic motion.
+- [ ] Enter calibration in Shuffleboard; check output on disabled robot first.
+- [ ] Verify readiness, B release, loss of calibration, and disabled behavior.
+- [ ] Store calibrated shot values persistently in source after validation.
+- [ ] Stage 2: derive distance from field pose and verified HUB center,
+      then make distance-source selection manual / vision; NOT implemented yet.
+
 ## Remaining planned tasks (in priority order)
 1. **Intake-to-shooter FUEL flow:** Verify roller direction, feed continuity,
    avoid jams and overfeeding, and test with multiple game pieces.
