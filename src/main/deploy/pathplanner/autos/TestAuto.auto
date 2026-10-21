@@ -7,7 +7,7 @@
         {
           "type": "path",
           "data": {
-            "pathName": "shoot 1"
+            "pathName": "move 1"
           }
         },
         {
@@ -23,9 +23,15 @@
           }
         },
         {
+          "type": "named",
+          "data": {
+            "name": "Auto Shooter Start"
+          }
+        },
+        {
           "type": "path",
           "data": {
-            "pathName": "shoot 2"
+            "pathName": "move 2"
           }
         }
       ]

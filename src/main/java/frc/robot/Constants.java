@@ -142,7 +142,7 @@ public final class Constants {
    * so these conservative test values DO NOT provide travel-end protection.
    */
   public static final class IntakeArmConstants {
-    public static final int MOTOR_CAN_ID = -1; // TODO: actual unique CAN ID (15-62).
+    public static final int MOTOR_CAN_ID = 15; // TODO: actual unique CAN ID (15-62).
     public static final double MOTOR_DIRECTION = 1.0; // Verify physical direction.
     public static final int CURRENT_LIMIT_AMPS = 10;
     public static final double DEFAULT_OUTPUT = 0.08;
