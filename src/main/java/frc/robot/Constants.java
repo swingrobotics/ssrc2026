@@ -142,6 +142,10 @@ public final class Constants {
     // Test values, NOT measured match-ready shot settings.
     // Motor 9 was previously driven with negative duty cycle.
     public static final double MOTOR_DIRECTION = -1.0;
+    // Original 50% driver-controlled duty cycle. Manual/uncalibrated auto
+    // operation uses this, never an RPM-to-percent conversion.
+    public static final double DEFAULT_OUTPUT_PERCENT = 50.0;
+    // RPM remains available only for validated shot calibration/auto tuning.
     public static final double DEFAULT_RPM = 1500.0;
     public static final double MAX_RPM = 3000.0;
     public static final double RPM_TOLERANCE = 150.0;
