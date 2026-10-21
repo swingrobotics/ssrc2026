@@ -133,6 +133,23 @@ public final class Constants {
     public static final double DEFAULT_OUTPUT = 0.20;
   }
 
+  /**
+   * Rack-and-pinion intake arm, separate from the two intake rollers.
+   * Assign the real unused CAN ID after confirming the SPARK MAX wiring.
+   * Until then the subsystem will not construct a motor or drive anything.
+   *
+   * There is no calibrated arm-angle sensor or hardware limit switch yet,
+   * so these conservative test values DO NOT provide travel-end protection.
+   */
+  public static final class IntakeArmConstants {
+    public static final int MOTOR_CAN_ID = -1; // TODO: actual unique CAN ID (15-62).
+    public static final double MOTOR_DIRECTION = 1.0; // Verify physical direction.
+    public static final int CURRENT_LIMIT_AMPS = 10;
+    public static final double DEFAULT_OUTPUT = 0.08;
+    public static final double MAX_OUTPUT = 0.10;
+    public static final double MAX_CONTINUOUS_RUN_SECONDS = 1.5;
+  }
+
   // Mechanism constants from FRC_Drive_Shooter_Merged.zip.
   public static final class ShooterConstants {
     public static final int SHOOTER_9_ID = 9;
