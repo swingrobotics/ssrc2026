@@ -165,6 +165,11 @@ public class RobotContainer {
     visionTab.addBoolean("Hub Center Aligned",
         () -> m_visionAlignEnabled && m_hubCenterAlign.isAligned(DriverStation.getAlliance()));
     visionTab.addString("Hub Center Align Status", m_hubCenterAlign::getStatus);
+    visionTab.addString("Hub Vision Filter Status", m_hubCenterAlign::getVisionFilterStatus);
+    visionTab.addDouble("Hub Rejected Pose Frames", m_hubCenterAlign::getRejectedPoseUpdates);
+    visionTab.addDouble("Hub Pose Step (m)", m_hubCenterAlign::getLastPoseJumpMeters);
+    visionTab.addDouble("Hub Heading Innovation (deg)",
+        m_hubCenterAlign::getLastHeadingInnovationDegrees);
     // Compensate a VERIFIED constant launcher/vision heading bias.
     // Positive trim commands a more counterclockwise aim; negative clockwise.
     // Zero is always the safe starting point; do not blindly dial in an angle.
@@ -554,6 +559,7 @@ public class RobotContainer {
         if (tagCount >= 2) {
           m_hubCenterAlign.acceptVision(
               measuredPose, timestamp, m_robotDrive.getHeading(),
+              m_robotDrive.getRobotRelativeSpeeds().omegaRadiansPerSecond,
               color, (int) tagCount);
         }
       }
