@@ -1,0 +1,25 @@
+name: HUB Pose Fusion Build
+
+on:
+  push:
+    branches: [hub-pose-fusion-2026]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wpilib-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the experimental branch
+        uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Make Gradle wrapper executable
+        run: chmod +x ./gradlew
+      - name: Build and run JUnit tests
+        run: ./gradlew clean test build --no-daemon
