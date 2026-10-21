@@ -97,6 +97,10 @@ public class HoodSubsystem extends SubsystemBase {
                         () -> Double.isFinite(holdTarget) && isHoodReady()
                                 ? holdTarget - getEncoderPosition() : 0.0);
         Shuffleboard.getTab("Hood")
+                .addDouble("Hood Auto/Hold Target", this::getTargetPosition);
+        Shuffleboard.getTab("Hood")
+                .addBoolean("Hood At Target", this::isAtTargetPosition);
+        Shuffleboard.getTab("Hood")
                 .addDouble("Hood Hold Output", () -> holdOutput);
         Shuffleboard.getTab("Debug")
                 .addDouble("Hood Gravity Assist Applied (%)",
@@ -203,6 +207,48 @@ public class HoodSubsystem extends SubsystemBase {
                 -HOLD_MAX_OUTPUT, HOLD_MAX_OUTPUT);
 
         runWithLimits(holdCommand, position);
+    }
+
+    /**
+     * Move to a verified absolute encoder setpoint using the existing HOLD PID,
+     * gravity assist, current limit and hardcoded min/max position limits.
+     *
+     * Called periodically while auto shot is requested. Invalid commands
+     * stop the motor rather than clamping an unknown target into the mechanism.
+     * setManual(non-zero) remains higher priority in RobotContainer.
+     */
+    public boolean setTargetPosition(double target) {
+        if (DriverStation.isDisabled()
+                || HoodConstants.CALIBRATION_MODE
+                || !isHoodReady()
+                || !Double.isFinite(target)
+                || target < HoodConstants.MIN_POSITION
+                || target > HoodConstants.MAX_POSITION) {
+            stop();
+            return false;
+        }
+
+        if (!Double.isFinite(holdTarget)) {
+            holdPid.reset();
+        }
+        holdTarget = target;
+        setManual(0.0);
+        return true;
+    }
+
+    /** Absolute DutyCycleEncoder target, or -1 when no position is requested. */
+    public double getTargetPosition() {
+        return Double.isFinite(holdTarget) ? holdTarget : -1.0;
+    }
+
+    /** Target is within tolerance; does not certify shot accuracy. */
+    public boolean isAtTargetPosition() {
+        return DriverStation.isEnabled()
+                && !HoodConstants.CALIBRATION_MODE
+                && isHoodReady()
+                && Double.isFinite(holdTarget)
+                && Math.abs(getEncoderPosition() - holdTarget)
+                    <= HoodConstants.AUTO_TARGET_TOLERANCE;
     }
 
     private void runWithLimits(double output, double position) {
