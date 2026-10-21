@@ -28,7 +28,7 @@ public final class HubCenterAlign {
   // rotation on the floor.
   private static final double KP = 1.8;
   private static final double KD = 0.18;
-  private static final double MAX_NORMALIZED_ROTATION = 0.25;
+  private static final double MAX_NORMALIZED_ROTATION = 0.16;
   private static final double POSE_TIMEOUT_SECONDS = 0.30;
   private static final double HEADING_TOLERANCE_RADIANS = Math.toRadians(1.5);
   private static final double MAX_STABLE_ROTATION_RAD_PER_SEC = 0.12;
@@ -221,6 +221,8 @@ public final class HubCenterAlign {
     double dy = hub.getY() - launcher.getY();
     if (Math.hypot(dx, dy) < 0.20) {
       stableSinceSeconds = -1.0;
+      lastTurnCommand = 0.0;
+      lastTurnCommandTime = -1.0;
       status = "TOO CLOSE TO HUB CENTER";
       return 0.0;
     }
@@ -243,7 +245,8 @@ public final class HubCenterAlign {
     // Hysteresis: after settling, ignore small target bearing fluctuations
     // instead of commanding clockwise/counterclockwise alternation.
     if ((stableSinceSeconds >= 0.0
-            && Math.abs(errorRadians) <= ALIGNED_HYSTERESIS_RADIANS)
+            && Math.abs(errorRadians) <= ALIGNED_HYSTERESIS_RADIANS
+            && Math.abs(angularRateRadPerSec) <= MAX_STABLE_ROTATION_RAD_PER_SEC * 1.5)
         || (Math.abs(errorRadians) <= HEADING_TOLERANCE_RADIANS
             && Math.abs(angularRateRadPerSec) <= MAX_STABLE_ROTATION_RAD_PER_SEC)) {
       if (stableSinceSeconds < 0.0) {
