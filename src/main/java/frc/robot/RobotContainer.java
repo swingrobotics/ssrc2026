@@ -35,8 +35,6 @@ import frc.robot.Constants.HubConstants;
 import frc.robot.HoodDistanceCalculator.Point;
 import frc.robot.Constants.OIConstants;
 import frc.robot.Constants.ShooterConstants;
-import frc.robot.ShotCalculator.CalibrationPoint;
-import frc.robot.ShotCalculator.ShotSetpoint;
 import frc.robot.subsystems.DriveSubsystem;
 import frc.robot.subsystems.FeederSubsystem;
 import frc.robot.subsystems.HoodSubsystem;
@@ -85,23 +83,17 @@ public class RobotContainer {
   private final GenericEntry m_driveSpeedEntry;
   private final GenericEntry m_shooterSpeedEntry;
   private final GenericEntry m_feederSpeedEntry;
-  // Manual-distance shot tuning. Defaults are INVALID until measured values
-  // are supplied, so switching on auto mode alone cannot start mechanism motion.
-  private final GenericEntry m_autoShotEnabledEntry;
-  private final GenericEntry m_manualShotDistanceEntry;
-  private final GenericEntry m_shotP1DistanceEntry;
-  private final GenericEntry m_shotP1RpmEntry;
-  private final GenericEntry m_shotP1HoodEntry;
-  private final GenericEntry m_shotP2DistanceEntry;
-  private final GenericEntry m_shotP2RpmEntry;
-  private final GenericEntry m_shotP2HoodEntry;
-  // Distance-only hood mode is INDEPENDENT of shooter % / RPM controls.
-  // Starts OFF until the team's measured hood data and camera pose are verified.
+  // Clean fixed-RPM calibration: use ONE tested motor RPM with manual hood
+  // first, then two measured near/far hood endpoints for live HUB tracking.
+  // Both modes default OFF; zero RPM and -1 raw hood positions are invalid.
+  private final GenericEntry m_fixedRpmEnabledEntry;
+  private final GenericEntry m_fixedRpmEntry;
   private final GenericEntry m_distanceHoodEnabledEntry;
   private final GenericEntry m_hoodDistanceP1Entry;
   private final GenericEntry m_hoodEncoderP1Entry;
   private final GenericEntry m_hoodDistanceP2Entry;
   private final GenericEntry m_hoodEncoderP2Entry;
+
   private double m_hubRawDistance = Double.NaN;
   private double m_hubFilteredDistance = Double.NaN;
   private double m_lastHubVisionTimestamp = -1.0;
@@ -112,7 +104,6 @@ public class RobotContainer {
   // Autonomous commands set a request; subsystem default commands own the
   // motors continuously, so the request persists across paths and is always
   // cleared on end/cancellation. Shooter-feeder actions are separately armed.
-  private final GenericEntry m_autoUseCalibratedShotEntry;
   // Explicitly opt in after confirming CAN 11/14 are the installed
   // shooter feeder (not the unfinished intake feeder).
   private final GenericEntry m_autoFeederEnabledEntry;
@@ -124,7 +115,7 @@ public class RobotContainer {
   private double m_autoShooterTargetRpm = 0.0;
   private double m_autoShooterTargetPercent = 0.0;
   private double m_autoShooterStartTime = -1.0;
-  private Optional<ShotSetpoint> m_autoShooterCalibratedSetpoint = Optional.empty();
+  private boolean m_autoShooterUseFixedRpm = false;
   private String m_autoShooterStatus = "Idle";
   private final GenericEntry m_visionFusionEntry;
   private final GenericEntry m_visionResetEntry;
@@ -177,84 +168,42 @@ public class RobotContainer {
         .withProperties(Map.of("min", 0.0,
             "max", ShooterConstants.MAX_MOTOR_OUTPUT * 100.0)).getEntry();
     // Actual shaft RPM remains a measurement, not the manual speed control.
-    driveTab.addDouble("Shooter Command Output (%)", m_shooter::getOutputPercent);
-    driveTab.addString("Shooter Control Mode", m_shooter::getControlMode);
     driveTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM);
-    driveTab.addDouble("Shooter Error RPM", m_shooter::getErrorRPM);
-    driveTab.addBoolean("Shooter RPM Ready", m_shooter::isAtSpeed);
-    driveTab.addBoolean("Feeder Allowed", m_feeder::isFeedAllowed);
-    driveTab.addBoolean("Feeder Command Active", m_feeder::isFeeding);
-    driveTab.addBoolean("Feeder A Requested", m_driverController::getAButton);
+    driveTab.addBoolean("Feeder Active", m_feeder::isFeeding);
     m_feederSpeedEntry = driveTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
     driveTab.addBoolean("Field Relative", () -> m_fieldRelativeEnabled);
     driveTab.addBoolean("Tag Auto Align", () -> m_visionAlignEnabled);
 
-    // Calibration data starts INVALID (0 RPM / -1 hood encoder position).
-    // Enter two MEASURED shots before auto control can become active.
+    // Only the chosen calibration strategy: one FIXED motor-shaft RPM,
+    // then two measured HUB distances with raw hood encoder endpoints.
+    // Keep all automatic calibration OFF by default.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
-    m_autoShotEnabledEntry = shotTab.add("Auto Shot Enabled", false).getEntry();
-    m_manualShotDistanceEntry = shotTab.add("Manual Distance (m)", 2.0).getEntry();
-    m_shotP1DistanceEntry = shotTab.add("Point 1 Distance (m)", 2.0).getEntry();
-    m_shotP1RpmEntry = shotTab.add("Point 1 Motor RPM", 0.0).getEntry();
-    m_shotP1HoodEntry = shotTab.add("Point 1 Hood Encoder", -1.0).getEntry();
-    m_shotP2DistanceEntry = shotTab.add("Point 2 Distance (m)", 3.0).getEntry();
-    m_shotP2RpmEntry = shotTab.add("Point 2 Motor RPM", 0.0).getEntry();
-    m_shotP2HoodEntry = shotTab.add("Point 2 Hood Encoder", -1.0).getEntry();
-    shotTab.addBoolean("Calibration Valid",
-        () -> ShotCalculator.areValidPair(getCalibration1(), getCalibration2()));
-    shotTab.addDouble("Calculated Motor RPM",
-        () -> getShotSolution().map(ShotSetpoint::motorRpm).orElse(0.0));
-    shotTab.addDouble("Calculated Hood Encoder",
-        () -> getShotSolution().map(ShotSetpoint::hoodPosition).orElse(-1.0));
+    m_fixedRpmEnabledEntry = shotTab.add("Fixed RPM Enabled", false).getEntry();
+    m_fixedRpmEntry = shotTab.add("Fixed Shooter RPM", 0.0).getEntry();
+    shotTab.addBoolean("Fixed RPM Valid", this::hasValidFixedRpm);
+    m_distanceHoodEnabledEntry = shotTab.add("Distance Hood Enabled", false).getEntry();
+    m_hoodDistanceP1Entry = shotTab.add("Min Shoot Distance (m)", 0.0).getEntry();
+    m_hoodEncoderP1Entry = shotTab.add("Hood at Min Distance", -1.0).getEntry();
+    m_hoodDistanceP2Entry = shotTab.add("Max Shoot Distance (m)", 0.0).getEntry();
+    m_hoodEncoderP2Entry = shotTab.add("Hood at Max Distance", -1.0).getEntry();
+    shotTab.addBoolean("Hood Calibration Valid", this::hasValidHoodCalibration);
+    shotTab.addDouble("Calculated Hood Target", () -> getDistanceHoodTarget().orElse(-1.0));
+    shotTab.addBoolean("Hood At Distance Target", this::isDistanceHoodAtTarget);
     shotTab.addBoolean("Hood Manual Override", () -> m_autoHoodManualOverride);
-    shotTab.addBoolean("Hood At Target", m_hood::isAtTargetPosition);
-    shotTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
-    shotTab.addString("Auto Shot Status", this::getAutoShotStatus);
-    // Enter TWO real (distance, raw encoder position) measurements.
-    // These settings DO NOT change shooter motor output/RPM.
-    m_distanceHoodEnabledEntry =
-        shotTab.add("Distance Hood Enabled", false).getEntry();
-    m_hoodDistanceP1Entry = shotTab.add("Hood Cal 1 Distance (m)", 2.0).getEntry();
-    m_hoodEncoderP1Entry = shotTab.add("Hood Cal 1 Raw Encoder", -1.0).getEntry();
-    m_hoodDistanceP2Entry = shotTab.add("Hood Cal 2 Distance (m)", 3.0).getEntry();
-    m_hoodEncoderP2Entry = shotTab.add("Hood Cal 2 Raw Encoder", -1.0).getEntry();
-    shotTab.addBoolean("Distance Hood Calibration Valid",
-        () -> HoodDistanceCalculator.areValidPair(getHoodDistancePoint1(), getHoodDistancePoint2()));
-    shotTab.addDouble("Raw HUB Center Distance (m)",
-        () -> Double.isFinite(m_hubRawDistance) ? m_hubRawDistance : -1.0);
-    shotTab.addDouble("Filtered HUB Distance (m)",
-        () -> Double.isFinite(getFreshHubDistance()) ? getFreshHubDistance() : -1.0);
-    shotTab.addDouble("Distance Hood Target Raw Encoder",
-        () -> getDistanceHoodTarget().orElse(-1.0));
-    shotTab.addBoolean("Distance Hood Target Ready", this::isDistanceHoodAtTarget);
-    shotTab.addString("Distance Hood Status", this::getDistanceHoodStatus);
-    shotTab.addString("HUB Pose Source", () -> m_hubDistanceStatus);
-    shotTab.addString("Alliance", () -> DriverStation.getAlliance()
-        .map(Enum::name).orElse("UNKNOWN"));
-    // When OFF, autonomous uses the driver percent-output slider and holds
-    // the hood's current position. When ON, it requires valid RPM calibration.
-    m_autoUseCalibratedShotEntry =
-        shotTab.add("Autonomous Use Calibration", false).getEntry();
-    shotTab.addDouble("Autonomous Target RPM", () -> m_autoShooterTargetRpm);
-    shotTab.addDouble("Autonomous Output (%)", () -> m_autoShooterTargetPercent);
-    shotTab.addBoolean("Autonomous Shooter Running", () -> m_autoShooterRequested);
-    shotTab.addBoolean("Autonomous Shot Ready", this::isAutonomousShooterReady);
-    shotTab.addString("Autonomous Shooter Status", () -> m_autoShooterStatus);
+    shotTab.addString("Shot Setup Status", this::getShotSetupStatus);
+
+    // Keep autonomous feed explicitly disarmed until robot testing.
     m_autoFeederEnabledEntry = shotTab.add("Autonomous Feeder Enabled", false).getEntry();
     m_autoFeedDurationEntry = shotTab.add("Autonomous Feed Duration (s)", 0.75)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.1, "max", 2.0)).getEntry();
-    shotTab.addBoolean("Autonomous Feeder Active", m_feeder::isFeeding);
-    shotTab.addDouble("Auto Robot Linear Speed (m/s)",
-        this::getAutoRobotLinearSpeed);
-    shotTab.addDouble("Auto Robot Angular Speed (deg/s)",
-        () -> Math.toDegrees(m_robotDrive.getRobotRelativeSpeeds().omegaRadiansPerSecond));
-    shotTab.addBoolean("Auto Robot Stopped", this::isAutonomousDriveStoppedNow);
+    shotTab.addBoolean("Autonomous Shot Ready", this::isAutonomousShooterReady);
+    shotTab.addString("Autonomous Shooter Status", () -> m_autoShooterStatus);
     shotTab.addString("Last Auto Shot Result", () -> m_autoLastShotResult);
-    driveTab.addBoolean("Auto Shot Enabled", this::isAutoShotEnabled);
-    driveTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
+    shotTab.addBoolean("Auto Robot Stopped", this::isAutonomousDriveStoppedNow);
+
 
     // Vision view: minimal AprilTag pose readings and operator-controlled fusion.
     ShuffleboardTab visionTab = Shuffleboard.getTab("Vision");
@@ -272,6 +221,11 @@ public class RobotContainer {
     m_visionFusionEntry = visionTab.add("Fusion Enabled", false).getEntry();
     m_visionResetEntry = visionTab.add("Reset Pose (Disabled)", false).getEntry();
     visionTab.addString("Reset Status", () -> m_visionResetStatus);
+    visionTab.addDouble("HUB Distance (m)",
+        () -> Double.isFinite(getFreshHubDistance()) ? getFreshHubDistance() : -1.0);
+    visionTab.addString("HUB Distance Status", () -> m_hubDistanceStatus);
+    visionTab.addString("Alliance", () -> DriverStation.getAlliance()
+        .map(Enum::name).orElse("UNKNOWN"));
 
     ShuffleboardTab debugTab = Shuffleboard.getTab("Debug");
     debugTab.addString("Vision Field Layout", () -> "2026 REBUILT Welded");
@@ -324,15 +278,12 @@ public class RobotContainer {
               double hoodInput = autonomous ? 0.0 : MathUtil.applyDeadband(
                   -m_driverController.getRightY(), OIConstants.kHoodDeadband);
               boolean bPressed = m_driverController.getBButton();
-              boolean teleopDistanceRequested = DriverStation.isTeleopEnabled()
-                  && bPressed && isDistanceHoodEnabled();
-              boolean teleopLegacyRequested = DriverStation.isTeleopEnabled()
-                  && bPressed && isAutoShotEnabled();
+              boolean distanceTracking = isDistanceHoodEnabled() && isFixedRpmEnabled();
               if (!bPressed && !autonomous) {
                 m_autoHoodManualOverride = false;
               }
               if (hoodInput != 0.0) {
-                if (teleopDistanceRequested || teleopLegacyRequested) {
+                if (distanceTracking && bPressed) {
                   m_autoHoodManualOverride = true;
                 }
                 m_autoHoodTargetActive = false;
@@ -340,25 +291,16 @@ public class RobotContainer {
                 return;
               }
 
-              // Live HUB distance wins over old manual-distance shot tuning.
-              // In teleop, right-stick input latches a manual override until
-              // the B button is released, exactly like previous hood tuning.
+              // Auto hood moves only when FIXED RPM is selected and both
+              // valid measured endpoints are supplied. No legacy RPM table.
               OptionalDouble target = OptionalDouble.empty();
-              if (autonomous && m_autoShooterRequested) {
-                if (isDistanceHoodEnabled()) {
-                  target = getDistanceHoodTarget();
-                } else if (m_autoShooterCalibratedSetpoint.isPresent()) {
-                  target = OptionalDouble.of(
-                      m_autoShooterCalibratedSetpoint.get().hoodPosition());
-                }
-              } else if (teleopDistanceRequested && !m_autoHoodManualOverride) {
+              if (distanceTracking
+                  && ((autonomous && m_autoShooterRequested && m_autoShooterUseFixedRpm)
+                      || (DriverStation.isTeleopEnabled()
+                          && bPressed && !m_autoHoodManualOverride))) {
                 target = getDistanceHoodTarget();
-              } else if (teleopLegacyRequested && !m_autoHoodManualOverride) {
-                Optional<ShotSetpoint> shot = getShotSolution();
-                if (shot.isPresent()) {
-                  target = OptionalDouble.of(shot.get().hoodPosition());
-                }
               }
+
               if (target.isPresent() && m_hood.setTargetPosition(target.getAsDouble())) {
                 m_autoHoodTargetActive = true;
                 return;
@@ -376,7 +318,7 @@ public class RobotContainer {
     // with drive subsystem requirements interfering with path following).
     m_shooter.setDefaultCommand(new RunCommand(() -> {
       if (DriverStation.isAutonomousEnabled() && m_autoShooterRequested) {
-        if (m_autoShooterCalibratedSetpoint.isPresent()) {
+        if (m_autoShooterUseFixedRpm) {
           m_shooter.setTargetRPM(m_autoShooterTargetRpm);
         } else {
           m_shooter.setOutputPercent(m_autoShooterTargetPercent);
@@ -555,81 +497,66 @@ public class RobotContainer {
   private void startAutonomousShooter() {
     stopAutonomousShooter();
     if (!DriverStation.isAutonomousEnabled()) {
-      m_autoShooterStatus = "BLOCKED: not in enabled autonomous";
+      m_autoShooterStatus = "BLOCKED: not enabled autonomous";
       return;
     }
     if (HoodConstants.CALIBRATION_MODE || !m_hood.isHoodReady()) {
       m_autoShooterStatus = "BLOCKED: hood encoder or calibration mode";
       return;
     }
-    if (isDistanceHoodEnabled()
-        && !HoodDistanceCalculator.areValidPair(
-            getHoodDistancePoint1(), getHoodDistancePoint2())) {
-      m_autoShooterStatus = "BLOCKED: two measured distance/hood points required";
+    if (isDistanceHoodEnabled() && (!isFixedRpmEnabled() || !hasValidHoodCalibration())) {
+      m_autoShooterStatus = "BLOCKED: fixed RPM + near/far hood measurements required";
       return;
     }
 
-    Optional<ShotSetpoint> shot = Optional.empty();
     double rpm = 0.0;
     double percent = 0.0;
-    // Live hood-by-distance mode intentionally keeps the shooter in its
-    // original PERCENT mode, even if legacy RPM calibration is toggled ON.
-    if (m_autoUseCalibratedShotEntry.getBoolean(false) && !isDistanceHoodEnabled()) {
-      shot = getShotSolution();
-      if (shot.isEmpty()) {
-        m_autoShooterStatus = "BLOCKED: no valid calibrated shot for distance";
-        return;
-      }
-      rpm = shot.get().motorRpm();
-      if (!Double.isFinite(rpm) || rpm <= 0.0 || rpm > ShooterConstants.MAX_RPM) {
-        m_autoShooterStatus = "BLOCKED: invalid calibrated RPM";
+    boolean rpmMode = isFixedRpmEnabled();
+    if (rpmMode) {
+      rpm = getValidatedFixedRpm();
+      if (!Double.isFinite(rpm)) {
+        m_autoShooterStatus = "BLOCKED: fixed shooter RPM not configured";
         return;
       }
     } else {
       percent = getShooterOutputPercent(m_shooterSpeedEntry);
-      if (!Double.isFinite(percent) || percent <= 0.0) {
-        m_autoShooterStatus = "BLOCKED: invalid shooter output percent";
+      if (percent <= 0.0) {
+        m_autoShooterStatus = "BLOCKED: manual shooter percent not configured";
         return;
       }
     }
 
-    m_autoShooterCalibratedSetpoint = shot;
+    m_autoShooterUseFixedRpm = rpmMode;
     m_autoShooterTargetRpm = rpm;
     m_autoShooterTargetPercent = percent;
     m_autoShooterStartTime = Timer.getFPGATimestamp();
     m_autoShooterRequested = true;
-    m_autoShooterStatus = shot.isPresent()
-        ? "SPINNING: calibrated RPM and hood target"
-        : "SPINNING: Drive output percent, hood holds current position";
+    m_autoShooterStatus = rpmMode
+        ? "SPINNING: fixed target RPM" : "SPINNING: manual output percent";
   }
 
   private boolean isAutonomousShooterReady() {
     if (!DriverStation.isAutonomousEnabled()
         || !m_autoShooterRequested
-        || !m_hood.isHoodReady()) {
+        || !m_hood.isHoodReady()
+        || m_autoShooterUseFixedRpm != isFixedRpmEnabled()) {
       return false;
     }
-    // When distance-hood mode is selected, do not feed until a FRESH
-    // camera pose yields a calibrated target AND hood reaches that target.
-    if (isDistanceHoodEnabled() && !isDistanceHoodAtTarget()) {
+    // If distance hood mode is toggled ON, require a valid fixed RPM and
+    // fresh vision-based calibrated hood position before ever feeding.
+    if (isDistanceHoodEnabled()
+        && (!m_autoShooterUseFixedRpm || !isDistanceHoodAtTarget())) {
       return false;
     }
-    // Uncalibrated percentage mode is ONLY a spin-up check. It cannot
-    // certify accuracy or a specific RPM. Require a minimum elapsed time
-    // and a measured rotating shaft rather than claiming RPM readiness.
-    if (m_autoShooterCalibratedSetpoint.isEmpty()) {
-      return m_shooter.getControlMode().equals("PERCENT")
-          && m_shooter.isReadyToFeed()
-          && m_autoShooterStartTime >= 0.0
-          && Timer.getFPGATimestamp() - m_autoShooterStartTime >= 1.0;
+    if (m_autoShooterUseFixedRpm) {
+      return m_shooter.isAtSpeed()
+          && Math.abs(m_shooter.getTargetRPM() - m_autoShooterTargetRpm) <= 1.0;
     }
-    ShotSetpoint requested = m_autoShooterCalibratedSetpoint.get();
-    return m_shooter.isAtSpeed()
-        && Math.abs(m_shooter.getTargetRPM() - m_autoShooterTargetRpm) <= 1.0
-        && m_hood.isAtTargetPosition()
-        && (isDistanceHoodEnabled()
-            || Math.abs(m_hood.getTargetPosition() - requested.hoodPosition())
-                <= HoodConstants.AUTO_TARGET_TOLERANCE);
+    // Manual % fallback only checks stable actual shaft speed, not accuracy.
+    return m_shooter.getControlMode().equals("PERCENT")
+        && m_shooter.isReadyToFeed()
+        && m_autoShooterStartTime >= 0.0
+        && Timer.getFPGATimestamp() - m_autoShooterStartTime >= 1.0;
   }
 
   private void stopAutonomousShooter() {
@@ -639,7 +566,7 @@ public class RobotContainer {
     m_autoShooterTargetRpm = 0.0;
     m_autoShooterTargetPercent = 0.0;
     m_autoShooterStartTime = -1.0;
-    m_autoShooterCalibratedSetpoint = Optional.empty();
+    m_autoShooterUseFixedRpm = false;
     m_shooter.stopShooter();
     m_autoShooterStatus = "STOPPED";
   }
@@ -656,25 +583,78 @@ public class RobotContainer {
         m_hoodEncoderP2Entry.getDouble(Double.NaN));
   }
 
+  private boolean isFixedRpmEnabled() {
+    return m_fixedRpmEnabledEntry.getBoolean(false);
+  }
+
+  private double getValidatedFixedRpm() {
+    double rpm = m_fixedRpmEntry.getDouble(Double.NaN);
+    return Double.isFinite(rpm) && rpm > 0.0 && rpm <= ShooterConstants.MAX_RPM
+        ? rpm : Double.NaN;
+  }
+
+  private boolean hasValidFixedRpm() {
+    return Double.isFinite(getValidatedFixedRpm());
+  }
+
   private boolean isDistanceHoodEnabled() {
     return m_distanceHoodEnabledEntry.getBoolean(false);
   }
 
+  private boolean hasValidHoodCalibration() {
+    Point near = getHoodDistancePoint1();
+    Point far = getHoodDistancePoint2();
+    return HoodDistanceCalculator.areValidPair(near, far)
+        && near.distanceMeters() < far.distanceMeters();
+  }
+
   /**
-   * Hardware feeder interlock. In live distance-hood mode, disallow any
-   * feed until the actual hood encoder reaches the current fresh target.
-   * This also covers manual A+B (the old interlock only checked flywheel).
+   * Feeder interlock: verified speed always required. In the fully
+   * calibrated mode, additionally require fresh HUB distance and actual
+   * hood-at-target. Manual right-stick override blocks auto feeding.
    */
   private boolean isShooterFeederReady() {
     if (!m_shooter.isReadyToFeed()) {
       return false;
     }
-    // During subsystem constructor setup, dashboard entries may not yet
-    // have been assigned. Never evaluate distance mode before it exists.
     if (m_distanceHoodEnabledEntry == null || !isDistanceHoodEnabled()) {
       return true;
     }
-    return !m_autoHoodManualOverride && isDistanceHoodAtTarget();
+    return isFixedRpmEnabled()
+        && m_shooter.getControlMode().equals("RPM")
+        && hasValidFixedRpm()
+        && Math.abs(m_shooter.getTargetRPM() - getValidatedFixedRpm()) <= 1.0
+        && !m_autoHoodManualOverride
+        && isDistanceHoodAtTarget();
+  }
+
+  private String getShotSetupStatus() {
+    if (!isFixedRpmEnabled()) {
+      return isDistanceHoodEnabled()
+          ? "BLOCKED: enable fixed RPM before distance hood"
+          : "MANUAL: B=percent shooter, right stick=hood";
+    }
+    if (!hasValidFixedRpm()) {
+      return "BLOCKED: enter tested fixed motor shaft RPM";
+    }
+    if (!isDistanceHoodEnabled()) {
+      return "FIXED RPM: hold B, set hood manually for shot calibration";
+    }
+    if (!hasValidHoodCalibration()) {
+      return "BLOCKED: enter measured min/max HUB distance and hood positions";
+    }
+    if (!Double.isFinite(getFreshHubDistance())) {
+      return "BLOCKED: fresh valid PhotonVision pose required";
+    }
+    if (getDistanceHoodTarget().isEmpty()) {
+      return "BLOCKED: HUB distance outside tested min/max range";
+    }
+    if (m_autoHoodManualOverride) {
+      return "MANUAL OVERRIDE: release B to reset";
+    }
+    return isDistanceHoodAtTarget()
+        ? "HOOD READY: shot trajectory still requires validation"
+        : "TRACKING: hold B in teleop or Auto Shooter Start";
   }
 
   /** Invalidates stale pose/unknown alliance instead of reusing old geometry. */
@@ -689,6 +669,9 @@ public class RobotContainer {
   }
 
   private OptionalDouble getDistanceHoodTarget() {
+    if (!hasValidHoodCalibration()) {
+      return OptionalDouble.empty();
+    }
     return HoodDistanceCalculator.interpolate(
         getFreshHubDistance(), getHoodDistancePoint1(), getHoodDistancePoint2());
   }
@@ -702,31 +685,7 @@ public class RobotContainer {
             <= HoodConstants.AUTO_TARGET_TOLERANCE;
   }
 
-  private String getDistanceHoodStatus() {
-    if (!isDistanceHoodEnabled()) {
-      return "OFF: shooter percent and manual hood unchanged";
-    }
-    if (!HoodDistanceCalculator.areValidPair(
-        getHoodDistancePoint1(), getHoodDistancePoint2())) {
-      return "BLOCKED: measure two HUB distance / raw hood encoder points";
-    }
-    if (!Double.isFinite(getFreshHubDistance())) {
-      return "BLOCKED: no fresh valid PhotonVision pose/alliance";
-    }
-    if (getDistanceHoodTarget().isEmpty()) {
-      return "BLOCKED: HUB distance outside calibrated interval";
-    }
-    if (!m_hood.isHoodReady() || HoodConstants.CALIBRATION_MODE) {
-      return "BLOCKED: hood encoder not ready";
-    }
-    if (m_autoHoodManualOverride && DriverStation.isTeleopEnabled()) {
-      return "MANUAL OVERRIDE: release B to reset";
-    }
-    if (isDistanceHoodAtTarget()) {
-      return "TARGET REACHED: measured encoder within tolerance";
-    }
-    return "TRACKING: auto moves only during B hold or Auto Shooter Start";
-  }
+ 
 
   /**
    * Process each newly accepted PhotonVision field pose exactly once.
@@ -778,81 +737,7 @@ public class RobotContainer {
     m_hubDistanceStatus = "FRESH: " + m_poseSolver + " pose -> alliance HUB center";
   }
 
-  /** Calibration points use observed MOTOR shaft RPM and raw hood encoder readings. */
-  private CalibrationPoint getCalibration1() {
-    return new CalibrationPoint(
-        m_shotP1DistanceEntry.getDouble(Double.NaN),
-        m_shotP1RpmEntry.getDouble(Double.NaN),
-        m_shotP1HoodEntry.getDouble(Double.NaN));
-  }
-
-  private CalibrationPoint getCalibration2() {
-    return new CalibrationPoint(
-        m_shotP2DistanceEntry.getDouble(Double.NaN),
-        m_shotP2RpmEntry.getDouble(Double.NaN),
-        m_shotP2HoodEntry.getDouble(Double.NaN));
-  }
-
-  private boolean isAutoShotEnabled() {
-    return m_autoShotEnabledEntry.getBoolean(false);
-  }
-
-  /** Only calibrated distances, never guessed or extrapolated setpoints. */
-  private Optional<ShotSetpoint> getShotSolution() {
-    return ShotCalculator.interpolate(
-        m_manualShotDistanceEntry.getDouble(Double.NaN),
-        getCalibration1(), getCalibration2());
-  }
-
-  private boolean isAutoShotReady() {
-    if (isDistanceHoodEnabled()
-        || !isAutoShotEnabled()
-        || !m_driverController.getBButton()
-        || m_autoHoodManualOverride
-        || !m_autoHoodTargetActive) {
-      return false;
-    }
-    Optional<ShotSetpoint> shot = getShotSolution();
-    if (shot.isEmpty()) {
-      return false;
-    }
-    return m_shooter.isAtSpeed()
-        && m_hood.isAtTargetPosition()
-        && Math.abs(m_shooter.getTargetRPM() - shot.get().motorRpm()) < 1.0
-        && Math.abs(m_hood.getTargetPosition() - shot.get().hoodPosition())
-            <= HoodConstants.AUTO_TARGET_TOLERANCE;
-  }
-
-  private String getAutoShotStatus() {
-    if (isDistanceHoodEnabled()) {
-      return "BYPASSED: live hood distance uses shooter percent output";
-    }
-    if (!isAutoShotEnabled()) {
-      return "OFF: manual RPM and hood control";
-    }
-    if (!ShotCalculator.areValidPair(getCalibration1(), getCalibration2())) {
-      return "BLOCKED: enter 2 valid measured calibration points";
-    }
-    if (getShotSolution().isEmpty()) {
-      return "BLOCKED: distance outside calibrated range";
-    }
-    if (m_autoHoodManualOverride) {
-      return "MANUAL HOOD OVERRIDE: release B to reset";
-    }
-    if (!m_driverController.getBButton()) {
-      return "ARMED: hold B to move hood and spin shooter";
-    }
-    if (HoodConstants.CALIBRATION_MODE) {
-      return "BLOCKED: hood calibration mode";
-    }
-    if (!m_hood.isHoodReady()) {
-      return "BLOCKED: hood encoder not ready";
-    }
-    if (isAutoShotReady()) {
-      return "READY: RPM and hood at calculated targets";
-    }
-    return "WAIT: adjusting RPM / hood position";
-  }
+ 
 
   /**
    * Returns the normal manual rotation command from the controller triggers.
@@ -1022,13 +907,9 @@ public class RobotContainer {
     new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
-              if (isAutoShotEnabled() && !isDistanceHoodEnabled()) {
-                // Legacy calibrated RPM only when distance hood is OFF.
-                // Invalid calibration or hood sensor blocks closed-loop RPM.
-                double rpm = (!HoodConstants.CALIBRATION_MODE && m_hood.isHoodReady())
-                    ? getShotSolution().map(ShotSetpoint::motorRpm).orElse(0.0)
-                    : 0.0;
-                m_shooter.setTargetRPM(rpm);
+              if (isFixedRpmEnabled()) {
+                // Invalid RPM safely stops the shooter (no guessed default).
+                m_shooter.setTargetRPM(getValidatedFixedRpm());
               } else {
                 m_shooter.setOutputPercent(getShooterOutputPercent(m_shooterSpeedEntry));
               }
