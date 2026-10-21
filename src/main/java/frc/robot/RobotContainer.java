@@ -68,7 +68,7 @@ public class RobotContainer {
   private final DriveSubsystem m_robotDrive = new DriveSubsystem();
   private final ShooterSubsystem m_shooter = new ShooterSubsystem();
   // The SHOOTER feeder (CAN 11/14) may feed only after measured flywheel
-  // stability in percent mode or target RPM stability in calibrated mode.
+  // stability of real rotation before accepting feeder commands.
   private final FeederSubsystem m_feeder = new FeederSubsystem(m_shooter::isReadyToFeed);
   private final HoodSubsystem m_hood = new HoodSubsystem();
   // Intake roller controllers stay disabled until both roller CAN IDs are assigned.
@@ -137,8 +137,7 @@ public class RobotContainer {
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0,
             "max", ShooterConstants.MAX_MOTOR_OUTPUT * 100.0)).getEntry();
-    // Motor-shaft RPM is shown here for calibration; details are in Shooter.
-    driveTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM);
+    // All operator speed settings use motor duty-cycle PERCENT only.
     driveTab.addBoolean("Feeder Active", m_feeder::isFeeding);
     m_feederSpeedEntry = driveTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
