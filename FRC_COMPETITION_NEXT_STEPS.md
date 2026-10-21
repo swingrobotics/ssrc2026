@@ -54,6 +54,30 @@ persistent checklist, not a claim of match-readiness.
 - [ ] Stage 2: derive distance from field pose and verified HUB center,
       then make distance-source selection manual / vision; NOT implemented yet.
 
+## PathPlanner autonomous shooter sequence (added; not yet tested)
+- [x] Register `Auto Shooter Start`, `Auto Shoot`, and `Auto Shooter Stop`
+      as PathPlanner Named Commands BEFORE building the auto chooser.
+- [x] Add `TestAutoWithShooter.auto` as a separate routine, preserving
+      the existing `TestAuto.auto` and the original path files.
+- [x] Spin up while following `shoot 1` and `shoot 2`; at the end of
+      each path, wait at most 2s to check RPM and hood readiness.
+- [x] Default to the Drive `Shooter Target RPM` slider; preserve current
+      hood angle if shot calibration is incomplete.
+- [x] Offer optional `Autonomous Use Calibration` on `Shot Tuning`.
+      When enabled, reject invalid shot calibrations and command the
+      snapshotted calibrated RPM plus hood setpoint.
+- [x] Stop motor on named Stop and finallyDo when the auto completes or
+      is interrupted; report status on the `Shot Tuning` tab.
+- [x] Do not command feeder hardware: the mechanism is not built.
+      `Auto Shoot` is an RPM/hood readiness CHECK, not a ball launch.
+- [ ] Verify Java build and inspect PathPlanner GUI named commands / auto chooser.
+- [ ] Confirm motor and hood behavior in a supervised mechanism check.
+- [ ] Re-time and validate paths: current total route may exceed 20-second auto.
+- [ ] Once feeder mechanism is built and approved: add a gated, time-bounded
+      feeder actuation with early stop on loss of RPM or hood readiness.
+- [ ] After shot calibration: verify calibrated autonomous position control,
+      safe shot distances and repeatable accuracy.
+
 ## Remaining planned tasks (in priority order)
 1. **Intake-to-shooter FUEL flow:** Verify roller direction, feed continuity,
    avoid jams and overfeeding, and test with multiple game pieces.
