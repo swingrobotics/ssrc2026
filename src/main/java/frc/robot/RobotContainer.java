@@ -458,6 +458,7 @@ public class RobotContainer {
    * Runs in disabled, autonomous, and teleop via updateDashboard().
    */
   private void updateVisionTarget() {
+    double now = Timer.getFPGATimestamp();
     for (var result : m_photonCamera.getAllUnreadResults()) {
       if (!result.hasTargets()) {
         continue;
@@ -562,15 +563,6 @@ public class RobotContainer {
       }
       m_visionResetEntry.setBoolean(false);
     }
-  }
-
-  /** Manual triggers still work when HUB alignment is OFF. */
-  private double getTriggerRotation() {
-    double left = MathUtil.applyDeadband(
-        m_driverController.getLeftTriggerAxis(), OIConstants.kDriveDeadband);
-    double right = MathUtil.applyDeadband(
-        m_driverController.getRightTriggerAxis(), OIConstants.kDriveDeadband);
-    return left - right;
   }
 
   /** Aim robot +X at alliance HUB center while keeping stick translation. */
