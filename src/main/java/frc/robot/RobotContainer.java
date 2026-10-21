@@ -122,6 +122,8 @@ public class RobotContainer {
 
   // Vision auto-align state.
   private boolean m_visionAlignEnabled = false;
+  // Actual normalized rotation requested by HUB aim, BEFORE drive scaling.
+  private double m_lastHubTurnOutput = 0.0;
   private double m_lastVisionPoseReceivedAt = -1.0;
   private double m_lastVisionMeasurementTimestamp = -1.0;
   private Pose2d m_lastRawVisionPose = null;
@@ -199,6 +201,14 @@ public class RobotContainer {
     visionTab.addString("Alliance",
         () -> DriverStation.getAlliance().map(Enum::name).orElse("UNKNOWN"));
     visionTab.addString("HUB Align Status", m_hubCenterAlign::getStatus);
+    // Diagnostic chain: driver X -> enable state -> localization gates ->
+    // actual computed turn output. Unlike camera yaw, these answer
+    // "why does the robot not rotate?" without bypassing safety checks.
+    visionTab.addBoolean("HUB X Button Pressed", m_driverController::getXButton);
+    visionTab.addBoolean("HUB Align Requested", () -> m_visionAlignEnabled);
+    visionTab.addBoolean("HUB Teleop Enabled", DriverStation::isTeleopEnabled);
+    visionTab.addString("HUB Turn Blocker", this::getHubRotationBlocker);
+    visionTab.addDouble("HUB Turn Command (%)", () -> m_lastHubTurnOutput * 100.0);
     visionTab.addDouble("HUB Error (deg)",
         m_hubCenterAlign::getHeadingErrorDegrees);
     visionTab.addBoolean("HUB Aligned",
@@ -245,6 +255,7 @@ public class RobotContainer {
               // A gap between autonomous path commands must not execute
               // joystick-driven motion. PathPlanner overrides this default.
               if (!DriverStation.isTeleopEnabled()) {
+                m_lastHubTurnOutput = 0.0;
                 m_robotDrive.driveRobotRelative(new ChassisSpeeds());
                 return;
               }
@@ -619,11 +630,36 @@ public class RobotContainer {
 
 
 
+  /**
+   * First unmet condition in the actual drive-to-HUB command chain.
+   * Never bypass these requirements just to make wheels rotate.
+   */
+  private String getHubRotationBlocker() {
+    if (!DriverStation.isTeleopEnabled()) return "TELEOP NOT ENABLED";
+    if (!m_visionAlignEnabled) return "X: HUB ALIGN IS OFF";
+    if (!m_fieldVerifiedEntry.getBoolean(false))
+      return "FIELD CAMERA VERIFIED IS OFF";
+    if (!m_robotDrive.isFieldPoseInitialized())
+      return "POSE NOT INITIALIZED: RESET WHILE DISABLED";
+    if (!m_robotDrive.isGyroReady())
+      return "NAVX NOT CONNECTED OR CALIBRATING";
+    if (DriverStation.getAlliance().isEmpty())
+      return "ALLIANCE UNKNOWN IN DRIVER STATION";
+    if (!m_robotDrive.hasRecentVision(1.0))
+      return "NO FRESH FUSED VISION IN LAST 1 SECOND";
+    if (m_hubCenterAlign.isAligned())
+      return "ALREADY ALIGNED: ROTATION CORRECTLY STOPPED";
+    return m_hubCenterAlign.getStatus();
+  }
+
   /** FRC 135-style point-facing profiled rotation from fused field pose. */
   private double getDriveRotationCommand() {
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
-    if (!m_visionAlignEnabled) return getTriggerRotation();
-    return m_hubCenterAlign.calculateTurn(
+    if (!m_visionAlignEnabled) {
+      m_lastHubTurnOutput = 0.0;
+      return getTriggerRotation();
+    }
+    m_lastHubTurnOutput = m_hubCenterAlign.calculateTurn(
         m_robotDrive.getPose(),
         m_robotDrive.getRobotRelativeSpeeds(),
         DriverStation.getAlliance(),
@@ -641,8 +677,12 @@ public class RobotContainer {
   /** Toggle PhotonVision AprilTag auto-alignment on/off. */
   private void toggleVisionAlign() {
     m_visionAlignEnabled = !m_visionAlignEnabled;
-    if (m_visionAlignEnabled) m_hubCenterAlign.start();
-    else m_hubCenterAlign.stop();
+    if (m_visionAlignEnabled) {
+      m_hubCenterAlign.start();
+    } else {
+      m_hubCenterAlign.stop();
+      m_lastHubTurnOutput = 0.0;
+    }
   }
 
   /**
