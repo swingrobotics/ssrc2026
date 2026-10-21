@@ -27,8 +27,14 @@ persistent checklist, not a claim of match-readiness.
       Calibration controls `Hood Cal 1/2 Distance (m)`,
       `Hood Cal 1/2 Raw Encoder` start invalid (-1 encoder).
 - [x] B held in TELEOP: target live distance-based hood position while
-      shooter continues ORIGINAL percent command; right-stick manual
+      shooter continues ORIGINAL percent command, even if legacy
+      `Auto Shot Enabled` RPM toggle remains ON. Right-stick manual
       hood override remains available until B release.
+- [x] In DISTANCE hood mode, both TELEOP A+B and AUTONOMOUS feeding
+      require fresh distance, measured/calibrated hood at target AND shooter
+      speed ready. Manual override blocks feeding in this mode.
+- [x] `Autonomous Use Calibration` RPM mode is bypassed when
+      `Distance Hood Enabled` is ON, preserving shooter % as requested.
 - [x] In AUTONOMOUS, after `Auto Shooter Start`, live hood tracking can
       execute in parallel with PathPlanner traversal, independent of
       shooter percent mode. `Auto Shoot` requires actual hood-at-target
