@@ -16,10 +16,14 @@ import java.util.Optional;
  * expires quickly on lost frames; single-tag yaw never drives the robot.
  *
  * Robot forward (+X) is assumed to be the shooter/launcher direction.
- * Set LAUNCHER_YAW_OFFSET_RADIANS only after checking physical geometry.
+ * An operator aim trim compensates a VERIFIED constant heading bias during
+ * initial calibration; it cannot correct a wrong field pose or camera mount.
  */
 public final class HubCenterAlign {
+  // Physical launcher yaw relative to robot +X (CCW-positive). Measure if
+  // the actual launcher does not point exactly forward; do NOT guess.
   private static final double LAUNCHER_YAW_OFFSET_RADIANS = 0.0;
+  private static final double MAX_AIM_TRIM_DEGREES = 15.0;
   // Conservative initial tune; field-check the heading sign before enabling
   // rotation on the floor.
   private static final double KP = 1.8;
@@ -36,6 +40,12 @@ public final class HubCenterAlign {
   private double gyroAtVisionRadians = Double.NaN;
   private int hubTags = 0;
   private double headingErrorDegrees = Double.NaN;
+  private double untrimmedHeadingErrorDegrees = Double.NaN;
+  private double estimatedHeadingDegrees = Double.NaN;
+  private double desiredHeadingDegrees = Double.NaN;
+  private double hubBearingDegrees = Double.NaN;
+  private double hubDistanceMeters = Double.NaN;
+  private double aimTrimDegrees = 0.0;
   private double stableSinceSeconds = -1.0;
   private String status = "WAITING FOR HUB TAGS";
 
@@ -49,6 +59,28 @@ public final class HubCenterAlign {
           || id == 8 || id == 9 || id == 10 || id == 11;
     }
     return false;
+  }
+
+  /**
+   * Driver-tunable offset, positive = robot turns farther CCW toward the HUB,
+   * negative = robot turns farther CW. Clamped to prevent large surprises.
+   * Adjust only after confirming field pose and physical shooter direction.
+   */
+  public void setAimTrimDegrees(double requestedDegrees) {
+    double next = Double.isFinite(requestedDegrees)
+        ? MathUtil.clamp(requestedDegrees, -MAX_AIM_TRIM_DEGREES, MAX_AIM_TRIM_DEGREES)
+        : 0.0;
+    if (Math.abs(aimTrimDegrees - next) > 1e-6) {
+      aimTrimDegrees = next;
+      stableSinceSeconds = -1.0;
+    }
+  }
+
+  /** Positive trim means a more CCW target direction than the untrimmed aim. */
+  static double desiredHeadingRadians(
+      double bearingRadians, double launcherYawOffsetRadians, double trimDegrees) {
+    return MathUtil.angleModulus(
+        bearingRadians - launcherYawOffsetRadians + Math.toRadians(trimDegrees));
   }
 
   /** Receive an already-vetted multi-tag pose from RobotContainer. */
@@ -93,6 +125,11 @@ public final class HubCenterAlign {
         || !Double.isFinite(angularRateRadPerSec)
         || !Double.isFinite(gyroAtVisionRadians)) {
       headingErrorDegrees = Double.NaN;
+      untrimmedHeadingErrorDegrees = Double.NaN;
+      estimatedHeadingDegrees = Double.NaN;
+      desiredHeadingDegrees = Double.NaN;
+      hubBearingDegrees = Double.NaN;
+      hubDistanceMeters = Double.NaN;
       stableSinceSeconds = -1.0;
       status = "NO FRESH MULTI-HUB-TAG POSE";
       return 0.0;
@@ -118,8 +155,19 @@ public final class HubCenterAlign {
       return 0.0;
     }
 
-    double targetHeading = Math.atan2(dy, dx) - LAUNCHER_YAW_OFFSET_RADIANS;
+    double bearingRadians = Math.atan2(dy, dx);
+    double untrimmedTarget = desiredHeadingRadians(
+        bearingRadians, LAUNCHER_YAW_OFFSET_RADIANS, 0.0);
+    double targetHeading = desiredHeadingRadians(
+        bearingRadians, LAUNCHER_YAW_OFFSET_RADIANS, aimTrimDegrees);
     double errorRadians = MathUtil.angleModulus(targetHeading - estimatedHeading);
+
+    hubBearingDegrees = Math.toDegrees(bearingRadians);
+    hubDistanceMeters = Math.hypot(dx, dy);
+    estimatedHeadingDegrees = Math.toDegrees(estimatedHeading);
+    desiredHeadingDegrees = Math.toDegrees(targetHeading);
+    untrimmedHeadingErrorDegrees = Math.toDegrees(
+        MathUtil.angleModulus(untrimmedTarget - estimatedHeading));
     headingErrorDegrees = Math.toDegrees(errorRadians);
 
     if (Math.abs(errorRadians) <= HEADING_TOLERANCE_RADIANS
@@ -153,6 +201,34 @@ public final class HubCenterAlign {
     return Double.isFinite(headingErrorDegrees) ? headingErrorDegrees : -999.0;
   }
 
+  public double getUntrimmedHeadingErrorDegrees() {
+    return finiteOrSentinel(untrimmedHeadingErrorDegrees);
+  }
+
+  public double getEstimatedHeadingDegrees() {
+    return finiteOrSentinel(estimatedHeadingDegrees);
+  }
+
+  public double getDesiredHeadingDegrees() {
+    return finiteOrSentinel(desiredHeadingDegrees);
+  }
+
+  public double getHubBearingDegrees() {
+    return finiteOrSentinel(hubBearingDegrees);
+  }
+
+  public double getHubDistanceMeters() {
+    return finiteOrSentinel(hubDistanceMeters);
+  }
+
+  public double getAimTrimDegrees() {
+    return aimTrimDegrees;
+  }
+
+  private static double finiteOrSentinel(double value) {
+    return Double.isFinite(value) ? value : -999.0;
+  }
+
   public String getStatus() {
     return status;
   }
@@ -165,6 +241,12 @@ public final class HubCenterAlign {
     hubTags = 0;
     stableSinceSeconds = -1.0;
     headingErrorDegrees = Double.NaN;
+    untrimmedHeadingErrorDegrees = Double.NaN;
+    estimatedHeadingDegrees = Double.NaN;
+    desiredHeadingDegrees = Double.NaN;
+    hubBearingDegrees = Double.NaN;
+    hubDistanceMeters = Double.NaN;
+    // Deliberately retain operator trim across X toggle.
     status = "WAITING FOR HUB TAGS";
   }
 }
