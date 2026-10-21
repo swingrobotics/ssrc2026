@@ -297,7 +297,7 @@ public class DriveSubsystem extends SubsystemBase {
                 xSpeedDelivered,
                 ySpeedDelivered,
                 rotDelivered,
-                getGyroRotation())
+                m_fieldPoseInitialized ? getPose().getRotation() : getGyroRotation())
             : new ChassisSpeeds(xSpeedDelivered, ySpeedDelivered, rotDelivered));
 
     SwerveDriveKinematics.desaturateWheelSpeeds(
@@ -389,9 +389,20 @@ public class DriveSubsystem extends SubsystemBase {
     m_rearRight.resetEncoders();
   }
 
-  /** Zeroes the navX2 yaw/heading. */
+  /**
+   * Reset the raw navX heading without destroying the localized field pose.
+   * Once global coordinates are established, field orientation must not jump
+   * just because the driver presses Start.
+   */
   public void zeroHeading() {
+    Pose2d previousPose = getPose();
     m_gyro.reset();
+    boolean wasInitialized = m_fieldPoseInitialized;
+    Pose2d retainedPose = wasInitialized
+        ? previousPose
+        : new Pose2d(previousPose.getTranslation(), Rotation2d.kZero);
+    resetOdometry(retainedPose);
+    m_fieldPoseInitialized = wasInitialized;
   }
 
   /**
