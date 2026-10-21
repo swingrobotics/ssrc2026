@@ -28,6 +28,8 @@ import frc.robot.Constants.FeederConstants;
 import frc.robot.Constants.HoodConstants;
 import frc.robot.Constants.OIConstants;
 import frc.robot.Constants.ShooterConstants;
+import frc.robot.ShotCalculator.CalibrationPoint;
+import frc.robot.ShotCalculator.ShotSetpoint;
 import frc.robot.subsystems.DriveSubsystem;
 import frc.robot.subsystems.FeederSubsystem;
 import frc.robot.subsystems.HoodSubsystem;
@@ -61,6 +63,18 @@ public class RobotContainer {
   private final GenericEntry m_driveSpeedEntry;
   private final GenericEntry m_shooterSpeedEntry;
   private final GenericEntry m_feederSpeedEntry;
+  // Manual-distance shot tuning. Defaults are INVALID until measured values
+  // are supplied, so switching on auto mode alone cannot start mechanism motion.
+  private final GenericEntry m_autoShotEnabledEntry;
+  private final GenericEntry m_manualShotDistanceEntry;
+  private final GenericEntry m_shotP1DistanceEntry;
+  private final GenericEntry m_shotP1RpmEntry;
+  private final GenericEntry m_shotP1HoodEntry;
+  private final GenericEntry m_shotP2DistanceEntry;
+  private final GenericEntry m_shotP2RpmEntry;
+  private final GenericEntry m_shotP2HoodEntry;
+  private boolean m_autoHoodTargetActive = false;
+  private boolean m_autoHoodManualOverride = false;
   private final GenericEntry m_visionFusionEntry;
   private final GenericEntry m_visionResetEntry;
   private double m_lastTagId = -1.0;
@@ -123,6 +137,30 @@ public class RobotContainer {
     driveTab.addBoolean("Field Relative", () -> m_fieldRelativeEnabled);
     driveTab.addBoolean("Tag Auto Align", () -> m_visionAlignEnabled);
 
+    // Calibration data starts INVALID (0 RPM / -1 hood encoder position).
+    // Enter two MEASURED shots before auto control can become active.
+    ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
+    m_autoShotEnabledEntry = shotTab.add("Auto Shot Enabled", false).getEntry();
+    m_manualShotDistanceEntry = shotTab.add("Manual Distance (m)", 2.0).getEntry();
+    m_shotP1DistanceEntry = shotTab.add("Point 1 Distance (m)", 2.0).getEntry();
+    m_shotP1RpmEntry = shotTab.add("Point 1 Motor RPM", 0.0).getEntry();
+    m_shotP1HoodEntry = shotTab.add("Point 1 Hood Encoder", -1.0).getEntry();
+    m_shotP2DistanceEntry = shotTab.add("Point 2 Distance (m)", 3.0).getEntry();
+    m_shotP2RpmEntry = shotTab.add("Point 2 Motor RPM", 0.0).getEntry();
+    m_shotP2HoodEntry = shotTab.add("Point 2 Hood Encoder", -1.0).getEntry();
+    shotTab.addBoolean("Calibration Valid",
+        () -> ShotCalculator.areValidPair(getCalibration1(), getCalibration2()));
+    shotTab.addDouble("Calculated Motor RPM",
+        () -> getShotSolution().map(ShotSetpoint::motorRpm).orElse(0.0));
+    shotTab.addDouble("Calculated Hood Encoder",
+        () -> getShotSolution().map(ShotSetpoint::hoodPosition).orElse(-1.0));
+    shotTab.addBoolean("Hood Manual Override", () -> m_autoHoodManualOverride);
+    shotTab.addBoolean("Hood At Target", m_hood::isAtTargetPosition);
+    shotTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
+    shotTab.addString("Auto Shot Status", this::getAutoShotStatus);
+    driveTab.addBoolean("Auto Shot Enabled", this::isAutoShotEnabled);
+    driveTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
+
     // Vision view: minimal AprilTag pose readings and operator-controlled fusion.
     ShuffleboardTab visionTab = Shuffleboard.getTab("Vision");
     visionTab.addBoolean("Tag Visible", () -> m_visionTargetVisible);
@@ -174,13 +212,38 @@ public class RobotContainer {
             },
             m_robotDrive));
 
-    // Right stick Y manually moves the hood, using the ZIP's low output cap.
+    // Right stick always wins. If the stick was moved during auto shot,
+    // the hood stays in manual hold until B is released and pressed again.
     m_hood.setDefaultCommand(
         new RunCommand(
             () -> {
               double hoodInput = MathUtil.applyDeadband(
                   -m_driverController.getRightY(), OIConstants.kHoodDeadband);
-              m_hood.setManual(hoodInput * HoodConstants.TEST_MAX_SPEED);
+              boolean autoRequested = isAutoShotEnabled() && m_driverController.getBButton();
+              if (!m_driverController.getBButton()) {
+                m_autoHoodManualOverride = false;
+              }
+              if (hoodInput != 0.0) {
+                if (autoRequested) {
+                  m_autoHoodManualOverride = true;
+                }
+                m_autoHoodTargetActive = false;
+                m_hood.setManual(hoodInput * HoodConstants.TEST_MAX_SPEED);
+                return;
+              }
+              if (autoRequested && !m_autoHoodManualOverride) {
+                Optional<ShotSetpoint> shot = getShotSolution();
+                if (shot.isPresent() && m_hood.setTargetPosition(shot.get().hoodPosition())) {
+                  m_autoHoodTargetActive = true;
+                  return;
+                }
+              }
+              if (m_autoHoodTargetActive) {
+                m_autoHoodTargetActive = false;
+                m_hood.captureCurrentPosition();
+              } else {
+                m_hood.setManual(0.0);
+              }
             },
             m_hood));
   }
@@ -195,6 +258,75 @@ public class RobotContainer {
   private static double getShooterTargetRPM(GenericEntry entry) {
     double rpm = entry.getDouble(kDefaultShooterRpm);
     return Double.isFinite(rpm) ? MathUtil.clamp(rpm, 0.0, ShooterConstants.MAX_RPM) : 0.0;
+  }
+
+  /** Calibration points use observed MOTOR shaft RPM and raw hood encoder readings. */
+  private CalibrationPoint getCalibration1() {
+    return new CalibrationPoint(
+        m_shotP1DistanceEntry.getDouble(Double.NaN),
+        m_shotP1RpmEntry.getDouble(Double.NaN),
+        m_shotP1HoodEntry.getDouble(Double.NaN));
+  }
+
+  private CalibrationPoint getCalibration2() {
+    return new CalibrationPoint(
+        m_shotP2DistanceEntry.getDouble(Double.NaN),
+        m_shotP2RpmEntry.getDouble(Double.NaN),
+        m_shotP2HoodEntry.getDouble(Double.NaN));
+  }
+
+  private boolean isAutoShotEnabled() {
+    return m_autoShotEnabledEntry.getBoolean(false);
+  }
+
+  /** Only calibrated distances, never guessed or extrapolated setpoints. */
+  private Optional<ShotSetpoint> getShotSolution() {
+    return ShotCalculator.interpolate(
+        m_manualShotDistanceEntry.getDouble(Double.NaN),
+        getCalibration1(), getCalibration2());
+  }
+
+  private boolean isAutoShotReady() {
+    if (!isAutoShotEnabled()
+        || !m_driverController.getBButton()
+        || m_autoHoodManualOverride
+        || !m_autoHoodTargetActive) {
+      return false;
+    }
+    Optional<ShotSetpoint> shot = getShotSolution();
+    if (shot.isEmpty()) {
+      return false;
+    }
+    return m_shooter.isAtSpeed()
+        && m_hood.isAtTargetPosition()
+        && Math.abs(m_shooter.getTargetRPM() - shot.get().motorRpm()) < 1.0
+        && Math.abs(m_hood.getTargetPosition() - shot.get().hoodPosition())
+            <= HoodConstants.AUTO_TARGET_TOLERANCE;
+  }
+
+  private String getAutoShotStatus() {
+    if (!isAutoShotEnabled()) {
+      return "OFF: manual RPM and hood control";
+    }
+    if (!ShotCalculator.areValidPair(getCalibration1(), getCalibration2())) {
+      return "BLOCKED: enter 2 valid measured calibration points";
+    }
+    if (getShotSolution().isEmpty()) {
+      return "BLOCKED: distance outside calibrated range";
+    }
+    if (m_autoHoodManualOverride) {
+      return "MANUAL HOOD OVERRIDE: release B to reset";
+    }
+    if (!m_driverController.getBButton()) {
+      return "ARMED: hold B to move hood and spin shooter";
+    }
+    if (!m_hood.isHoodReady()) {
+      return "BLOCKED: hood encoder not ready";
+    }
+    if (isAutoShotReady()) {
+      return "READY: RPM and hood at calculated targets";
+    }
+    return "WAIT: adjusting RPM / hood position";
   }
 
   /**
@@ -360,11 +492,16 @@ public class RobotContainer {
             m_feeder::stopFeeder,
             m_feeder));
 
-    // Hold B for Spark MAX velocity control. Negative shaft direction is
-    // preserved inside ShooterSubsystem; release/interruption stops the flywheels.
+    // B remains hold-to-spin. In auto mode, it uses calibrated manual-distance
+    // setpoints only; invalid/out-of-range input stops the shooter.
     new JoystickButton(m_driverController, XboxController.Button.kB.value)
         .whileTrue(Commands.runEnd(
-            () -> m_shooter.setTargetRPM(getShooterTargetRPM(m_shooterSpeedEntry)),
+            () -> {
+              double rpm = isAutoShotEnabled()
+                  ? getShotSolution().map(ShotSetpoint::motorRpm).orElse(0.0)
+                  : getShooterTargetRPM(m_shooterSpeedEntry);
+              m_shooter.setTargetRPM(rpm);
+            },
             m_shooter::stopShooter,
             m_shooter));
 
