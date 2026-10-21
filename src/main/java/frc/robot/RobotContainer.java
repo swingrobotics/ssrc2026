@@ -68,16 +68,16 @@ public class RobotContainer {
       ShooterConstants.DEFAULT_OUTPUT_PERCENT;
   private static final double kDefaultFeederPercent = Math.abs(FeederConstants.TEST_SPEED) * 100.0;
 
-  // The original swerve/vision/autonomous subsystem, plus the ZIP's mechanism subsystems.
+  // Keep drivetrain, shooter/feeder, hood and intake mechanisms independent.
   private final DriveSubsystem m_robotDrive = new DriveSubsystem();
   private final ShooterSubsystem m_shooter = new ShooterSubsystem();
   // The SHOOTER feeder (CAN 11/14) may feed only after measured flywheel
   // stability in percent mode or target RPM stability in calibrated mode.
   private final FeederSubsystem m_feeder = new FeederSubsystem(this::isShooterFeederReady);
   private final HoodSubsystem m_hood = new HoodSubsystem();
-  // Creates no motor controllers until both intake CAN IDs are assigned.
+  // Intake roller controllers stay disabled until both roller CAN IDs are assigned.
   private final IntakeSubsystem m_intake = new IntakeSubsystem();
-  // Dedicated intake ARM on an as-yet-unassigned Spark MAX CAN ID.
+  // Intake arm is currently configured as CAN 15; verify hardware and limits.
   private final IntakeArmSubsystem m_intakeArm = new IntakeArmSubsystem();
 
   private final GenericEntry m_driveSpeedEntry;
@@ -167,7 +167,7 @@ public class RobotContainer {
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0,
             "max", ShooterConstants.MAX_MOTOR_OUTPUT * 100.0)).getEntry();
-    // Actual shaft RPM remains a measurement, not the manual speed control.
+    // Motor-shaft RPM is shown here for calibration; details are in Shooter.
     driveTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM);
     driveTab.addBoolean("Feeder Active", m_feeder::isFeeding);
     m_feederSpeedEntry = driveTab.add("Feeder Speed (%)", kDefaultFeederPercent)
@@ -358,11 +358,6 @@ public class RobotContainer {
     NamedCommands.registerCommand("Auto Shoot", makeStationaryAutoShootCommand());
     NamedCommands.registerCommand("Auto Shooter Stop",
         Commands.runOnce(this::stopAutonomousShooter));
-  }
-
-  private double getAutoRobotLinearSpeed() {
-    ChassisSpeeds speeds = m_robotDrive.getRobotRelativeSpeeds();
-    return Math.hypot(speeds.vxMetersPerSecond, speeds.vyMetersPerSecond);
   }
 
   /** Checks actual encoder-derived chassis velocity, not commanded velocity. */
@@ -685,8 +680,6 @@ public class RobotContainer {
             <= HoodConstants.AUTO_TARGET_TOLERANCE;
   }
 
- 
-
   /**
    * Process each newly accepted PhotonVision field pose exactly once.
    * Camera estimates are NOT odometry (fusion remains independently optional).
@@ -736,8 +729,6 @@ public class RobotContainer {
     m_lastHubVisionTimestamp = m_lastVisionMeasurementTimestamp;
     m_hubDistanceStatus = "FRESH: " + m_poseSolver + " pose -> alliance HUB center";
   }
-
- 
 
   /**
    * Returns the normal manual rotation command from the controller triggers.
@@ -903,7 +894,7 @@ public class RobotContainer {
             m_feeder));
 
     // B remains hold-to-spin. Default is the ORIGINAL manual percent output;
-    // optional, opt-in Auto Shot mode retains calibrated RPM control.
+    // optional fixed-RPM test mode keeps a single requested shaft RPM.
     new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
@@ -934,7 +925,7 @@ public class RobotContainer {
     // Xbox controller left-side D-pad / POV.
     // UP (0 deg): move intake ARM forward; DOWN (180 deg): move it back.
     // Each command ends and stops when the D-pad is released.
-    // The arm motor remains DISABLED until its unique CAN ID is configured.
+    // Confirm the actual arm CAN ID, motion directions and physical limits.
     new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getPOV() == 0)
         .whileTrue(Commands.runEnd(
             m_intakeArm::moveForward,
