@@ -8,6 +8,7 @@ import com.pathplanner.lib.auto.AutoBuilder;
 import com.pathplanner.lib.auto.NamedCommands;
 import edu.wpi.first.apriltag.AprilTagFieldLayout;
 import edu.wpi.first.math.MathUtil;
+import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Pose3d;
 import edu.wpi.first.wpilibj.DriverStation;
@@ -51,6 +52,16 @@ import java.util.Optional;
  */
 public class RobotContainer {
   private static final double kDefaultDrivePercent = 100.0;
+
+  // Measured chassis speed thresholds for a stationary autonomous shot.
+  // These are provisional, conservative starting values to validate on robot.
+  private static final double kAutoShootMaxLinearSpeedMps = 0.10;
+  private static final double kAutoShootMaxAngularSpeedRadPerSec = 0.15;
+  private static final double kAutoShootStopStableSeconds = 0.25;
+  private static final double kAutoShootStopTimeoutSeconds = 1.5;
+  private static final double kAutoShootReadyTimeoutSeconds = 2.0;
+  // A short pause with the feeder stopped; NOT confirmation that fuel exited.
+  private static final double kAutoShootPostFeedPauseSeconds = 0.15;
   private static final double kDefaultShooterPercent =
       ShooterConstants.DEFAULT_OUTPUT_PERCENT;
   private static final double kDefaultFeederPercent = Math.abs(FeederConstants.TEST_SPEED) * 100.0;
@@ -91,6 +102,8 @@ public class RobotContainer {
   private final GenericEntry m_autoFeederEnabledEntry;
   private final GenericEntry m_autoFeedDurationEntry;
   private double m_autoFeedDeadline = -1.0;
+  private double m_autoStopStableSince = -1.0;
+  private String m_autoLastShotResult = "NOT RUN";
   private boolean m_autoShooterRequested = false;
   private double m_autoShooterTargetRpm = 0.0;
   private double m_autoShooterTargetPercent = 0.0;
@@ -197,6 +210,12 @@ public class RobotContainer {
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.1, "max", 2.0)).getEntry();
     shotTab.addBoolean("Autonomous Feeder Active", m_feeder::isFeeding);
+    shotTab.addDouble("Auto Robot Linear Speed (m/s)",
+        this::getAutoRobotLinearSpeed);
+    shotTab.addDouble("Auto Robot Angular Speed (deg/s)",
+        () -> Math.toDegrees(m_robotDrive.getRobotRelativeSpeeds().omegaRadiansPerSecond));
+    shotTab.addBoolean("Auto Robot Stopped", this::isAutonomousDriveStoppedNow);
+    shotTab.addString("Last Auto Shot Result", () -> m_autoLastShotResult);
     driveTab.addBoolean("Auto Shot Enabled", this::isAutoShotEnabled);
     driveTab.addBoolean("Shot Settings Ready", this::isAutoShotReady);
 
@@ -244,6 +263,12 @@ public class RobotContainer {
     m_robotDrive.setDefaultCommand(
         new RunCommand(
             () -> {
+              // A gap between autonomous path commands must not execute
+              // joystick-driven motion. PathPlanner overrides this default.
+              if (!DriverStation.isTeleopEnabled()) {
+                m_robotDrive.driveRobotRelative(new ChassisSpeeds());
+                return;
+              }
               double scale = getOutputScale(m_driveSpeedEntry, kDefaultDrivePercent);
               m_robotDrive.drive(
                   -scale * MathUtil.applyDeadband(m_driverController.getLeftY(), OIConstants.kDriveDeadband),
@@ -324,26 +349,104 @@ public class RobotContainer {
   }
 
   /**
-   * PathPlanner's Auto Shoot now operates the installed SHOOTER feeder
-   * (CAN 11 / 14), never the incomplete intake feeder. It only feeds when
-   * explicitly enabled in Shuffleboard and the shooter is ready.
+   * Shoots only after the chassis has actually settled. Auto Shoot holds
+   * the drive subsystem for its entire duration, commanding zero robot-
+   * relative velocity even when a feeder burst is in progress.
+   *
+   * IMPORTANT: place Auto Shoot SEQUENTIALLY BETWEEN PATHS in PathPlanner.
+   * This command requires the drivetrain, so do not trigger it as an event
+   * marker while a path is actively following.
    */
   private void registerAutonomousShooterCommands() {
     NamedCommands.registerCommand("Auto Shooter Start",
         Commands.runOnce(this::startAutonomousShooter));
-    NamedCommands.registerCommand("Auto Shoot",
-        Commands.sequence(
-            Commands.waitUntil(this::isAutonomousShooterReady).withTimeout(2.0),
-            Commands.either(
-                makeAutonomousFeederCommand(),
-                Commands.runOnce(() -> m_autoShooterStatus =
-                    isAutonomousShooterReady()
-                        ? "FEED DISARMED: enable Autonomous Feeder Enabled"
-                        : "SKIPPED: shooter/hood not ready within 2s"),
-                () -> isAutonomousShooterReady()
-                    && m_autoFeederEnabledEntry.getBoolean(false))));
+    NamedCommands.registerCommand("Auto Shoot", makeStationaryAutoShootCommand());
     NamedCommands.registerCommand("Auto Shooter Stop",
         Commands.runOnce(this::stopAutonomousShooter));
+  }
+
+  private double getAutoRobotLinearSpeed() {
+    ChassisSpeeds speeds = m_robotDrive.getRobotRelativeSpeeds();
+    return Math.hypot(speeds.vxMetersPerSecond, speeds.vyMetersPerSecond);
+  }
+
+  /** Checks actual encoder-derived chassis velocity, not commanded velocity. */
+  private boolean isAutonomousDriveStoppedNow() {
+    ChassisSpeeds speeds = m_robotDrive.getRobotRelativeSpeeds();
+    return Double.isFinite(speeds.vxMetersPerSecond)
+        && Double.isFinite(speeds.vyMetersPerSecond)
+        && Double.isFinite(speeds.omegaRadiansPerSecond)
+        && Math.hypot(speeds.vxMetersPerSecond, speeds.vyMetersPerSecond)
+            <= kAutoShootMaxLinearSpeedMps
+        && Math.abs(speeds.omegaRadiansPerSecond)
+            <= kAutoShootMaxAngularSpeedRadPerSec;
+  }
+
+  /** Require measured motion to remain inside thresholds for 0.25s. */
+  private boolean isAutonomousDriveStoppedStable() {
+    if (!DriverStation.isAutonomousEnabled() || !isAutonomousDriveStoppedNow()) {
+      m_autoStopStableSince = -1.0;
+      return false;
+    }
+    double now = Timer.getFPGATimestamp();
+    if (m_autoStopStableSince < 0.0) {
+      m_autoStopStableSince = now;
+    }
+    return now - m_autoStopStableSince >= kAutoShootStopStableSeconds;
+  }
+
+  private boolean isAutonomousShotSafe() {
+    return isAutonomousDriveStoppedStable() && isAutonomousShooterReady();
+  }
+
+  /** A shooting phase cannot overlap PathPlanner drive movement. */
+  private Command makeStationaryAutoShootCommand() {
+    Command steps = Commands.sequence(
+        Commands.runOnce(() -> {
+          m_autoStopStableSince = -1.0;
+          m_autoLastShotResult = "WAITING: chassis stationary";
+          m_autoShooterStatus = "WAITING: chassis stationary";
+        }),
+        Commands.waitUntil(this::isAutonomousDriveStoppedStable)
+            .withTimeout(kAutoShootStopTimeoutSeconds),
+        Commands.either(
+            Commands.sequence(
+                Commands.runOnce(() -> m_autoShooterStatus =
+                    "CHASSIS STOPPED: checking shooter and hood"),
+                Commands.waitUntil(this::isAutonomousShotSafe)
+                    .withTimeout(kAutoShootReadyTimeoutSeconds),
+                Commands.either(
+                    makeAutonomousFeederCommand(),
+                    Commands.runOnce(() -> {
+                      m_autoLastShotResult = isAutonomousShotSafe()
+                          ? "DISARMED: Autonomous Feeder Enabled is OFF"
+                          : "SKIPPED: shooter/hood or stop interlock not ready";
+                      m_autoShooterStatus = m_autoLastShotResult;
+                    }),
+                    () -> isAutonomousShotSafe()
+                        && m_autoFeederEnabledEntry.getBoolean(false))),
+            Commands.runOnce(() -> {
+              m_autoLastShotResult = "SKIPPED: robot did not settle in time";
+              m_autoShooterStatus = m_autoLastShotResult;
+            }),
+            this::isAutonomousDriveStoppedStable));
+
+    // The deadline owns the feed/wait sequence; the concurrent drive command
+    // continuously requests zero speed and holds the drive requirement.
+    return Commands.deadline(
+        steps,
+        Commands.run(() -> m_robotDrive.driveRobotRelative(new ChassisSpeeds()),
+            m_robotDrive))
+        .finallyDo(interrupted -> {
+          m_feeder.stopFeeder();
+          m_autoFeedDeadline = -1.0;
+          m_autoStopStableSince = -1.0;
+          m_robotDrive.driveRobotRelative(new ChassisSpeeds());
+          if (interrupted) {
+            m_autoLastShotResult = "INTERRUPTED: feeder stopped";
+            m_autoShooterStatus = m_autoLastShotResult;
+          }
+        });
   }
 
   /** A bounded feed burst, stopped on timeout, readiness loss, or cancellation. */
@@ -360,7 +463,7 @@ public class RobotContainer {
             () -> {
               if (DriverStation.isAutonomousEnabled()
                   && m_autoFeederEnabledEntry.getBoolean(false)
-                  && isAutonomousShooterReady()) {
+                  && isAutonomousShotSafe()) {
                 m_feeder.runFeeder(
                     getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent));
               } else {
@@ -371,14 +474,18 @@ public class RobotContainer {
             m_feeder)
             .until(() -> !DriverStation.isAutonomousEnabled()
                 || !m_autoFeederEnabledEntry.getBoolean(false)
-                || !isAutonomousShooterReady()
+                || !isAutonomousShotSafe()
                 || m_autoFeedDeadline < 0.0
                 || Timer.getFPGATimestamp() >= m_autoFeedDeadline),
         Commands.runOnce(() -> {
+          // No ball-exit sensor: finishing the timer only proves the feed
+          // command ended, NOT that every game piece was launched.
           m_feeder.stopFeeder();
           m_autoFeedDeadline = -1.0;
-          m_autoShooterStatus = "FEED COMMAND COMPLETE: verify fuel exited";
-        }));
+          m_autoLastShotResult = "FEED STOPPED: verify fuel cleared";
+          m_autoShooterStatus = m_autoLastShotResult;
+        }),
+        Commands.waitSeconds(kAutoShootPostFeedPauseSeconds));
   }
 
   private void startAutonomousShooter() {
