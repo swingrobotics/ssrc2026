@@ -48,6 +48,14 @@ public class ShooterSubsystem extends SubsystemBase {
   private double targetRPM = 0.0;
   private double commandedOutputPercent = 0.0;
   private int stableCycles = 0;
+  // Percent duty cycle has no exact RPM target. This detects reasonably
+  // steady, measured rotation; it does NOT guarantee a valid scoring shot.
+  private static final double PERCENT_READY_MIN_RPM = 300.0;
+  private static final double PERCENT_READY_MIN_SECONDS = 0.75;
+  private static final int PERCENT_READY_STABLE_CYCLES = 8;
+  private int percentStableCycles = 0;
+  private double lastPercentRPM = Double.NaN;
+  private double percentStartTimestamp = -1.0;
 
   public ShooterSubsystem() {
     SparkMaxConfig shooter9Config = new SparkMaxConfig();
@@ -89,6 +97,7 @@ public class ShooterSubsystem extends SubsystemBase {
     shooterTab.addDouble("Motor 10 RPM", this::getMotor10RPM);
     shooterTab.addDouble("Motor 12 RPM", this::getMotor12RPM);
     shooterTab.addBoolean("At Target RPM", this::isAtSpeed);
+    shooterTab.addBoolean("Feeder Speed Ready", this::isReadyToFeed);
     shooterTab.addBoolean("Running", this::isRunning);
 
     publishTelemetry();
@@ -110,6 +119,11 @@ public class ShooterSubsystem extends SubsystemBase {
 
     double percent = MathUtil.clamp(requestedPercent, 0.0,
         ShooterConstants.MAX_MOTOR_OUTPUT * 100.0);
+    if (mode != ControlMode.PERCENT || Math.abs(percent - commandedOutputPercent) > 0.1) {
+      percentStableCycles = 0;
+      lastPercentRPM = Double.NaN;
+      percentStartTimestamp = edu.wpi.first.wpilibj.Timer.getFPGATimestamp();
+    }
     mode = ControlMode.PERCENT;
     targetRPM = 0.0;
     stableCycles = 0;
@@ -136,6 +150,9 @@ public class ShooterSubsystem extends SubsystemBase {
     }
     mode = ControlMode.RPM;
     commandedOutputPercent = 0.0;
+    percentStableCycles = 0;
+    lastPercentRPM = Double.NaN;
+    percentStartTimestamp = -1.0;
     targetRPM = safeRPM;
     velocityController.setSetpoint(
         ShooterConstants.MOTOR_DIRECTION * targetRPM,
@@ -187,12 +204,37 @@ public class ShooterSubsystem extends SubsystemBase {
         && stableCycles >= ShooterConstants.READY_STABLE_CYCLES;
   }
 
+  /**
+   * Feed-readiness for BOTH control modes. RPM mode checks its setpoint;
+   * percent mode merely verifies sustained, reasonably steady rotation.
+   * Percent mode cannot establish a guaranteed RPM for a scoring shot.
+   */
+  public boolean isReadyToFeed() {
+    if (!DriverStation.isEnabled()) {
+      return false;
+    }
+    if (mode == ControlMode.RPM) {
+      return isAtSpeed();
+    }
+    return mode == ControlMode.PERCENT
+        && commandedOutputPercent > 0.0
+        && percentStartTimestamp >= 0.0
+        && edu.wpi.first.wpilibj.Timer.getFPGATimestamp() - percentStartTimestamp
+            >= PERCENT_READY_MIN_SECONDS
+        && percentStableCycles >= PERCENT_READY_STABLE_CYCLES
+        && Double.isFinite(getActualRPM())
+        && getActualRPM() >= PERCENT_READY_MIN_RPM;
+  }
+
   /** Stop the leader; its two hardware followers will stop with it. */
   public void stopShooter() {
     mode = ControlMode.STOPPED;
     targetRPM = 0.0;
     commandedOutputPercent = 0.0;
     stableCycles = 0;
+    percentStableCycles = 0;
+    lastPercentRPM = Double.NaN;
+    percentStartTimestamp = -1.0;
     shooter9.stopMotor();
   }
 
@@ -203,6 +245,21 @@ public class ShooterSubsystem extends SubsystemBase {
     }
 
     double actualRPM = getActualRPM();
+    if (mode == ControlMode.PERCENT
+        && Double.isFinite(actualRPM)
+        && actualRPM >= PERCENT_READY_MIN_RPM) {
+      // A settled percentage-driven flywheel may vary slightly with voltage.
+      double allowedDelta = Math.max(120.0, Math.abs(actualRPM) * 0.08);
+      percentStableCycles =
+          (Double.isFinite(lastPercentRPM)
+              && Math.abs(actualRPM - lastPercentRPM) <= allowedDelta)
+              ? Math.min(percentStableCycles + 1, PERCENT_READY_STABLE_CYCLES)
+              : 0;
+      lastPercentRPM = actualRPM;
+    } else {
+      percentStableCycles = 0;
+      lastPercentRPM = Double.NaN;
+    }
     if (mode == ControlMode.RPM && targetRPM > 0.0
         && Double.isFinite(actualRPM)
         && Math.abs(targetRPM - actualRPM) <= ShooterConstants.RPM_TOLERANCE) {
@@ -225,5 +282,6 @@ public class ShooterSubsystem extends SubsystemBase {
     SmartDashboard.putNumber("Shooter Motor 12 RPM", getMotor12RPM());
     SmartDashboard.putBoolean("Shooter Running", isRunning());
     SmartDashboard.putBoolean("Shooter At Target RPM", isAtSpeed());
+    SmartDashboard.putBoolean("Shooter Feeder Speed Ready", isReadyToFeed());
   }
 }
