@@ -22,6 +22,7 @@ import edu.wpi.first.math.kinematics.SwerveDriveKinematics;
 import edu.wpi.first.math.kinematics.SwerveModulePosition;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
@@ -65,6 +66,13 @@ public class DriveSubsystem extends SubsystemBase {
   private Pose2d m_pathPlannerCurrentPose = new Pose2d();
   private Pose2d m_pathPlannerTargetPose = new Pose2d();
 
+  // A field pose is not trustworthy just because the robot starts at (0, 0).
+  // Initialize using a verified multi-tag pose while Disabled, or via
+  // PathPlanner's explicit starting pose reset.
+  private boolean m_fieldPoseInitialized = false;
+  private double m_lastAcceptedVisionTime = -1.0;
+  private long m_visionMeasurementsApplied = 0;
+
   // Swerve/navX2 odometry with optional, latency-compensated vision fusion.
   private final SwerveDrivePoseEstimator m_poseEstimator = new SwerveDrivePoseEstimator(
       DriveConstants.kDriveKinematics,
@@ -86,6 +94,10 @@ public class DriveSubsystem extends SubsystemBase {
     driveTab.addDouble("Pose Y (m)", () -> getPose().getY());
     driveTab.addDouble("Pose Heading (deg)", () -> getPose().getRotation().getDegrees());
     driveTab.addBoolean("NavX Connected", m_gyro::isConnected);
+    driveTab.addBoolean("NavX Ready", this::isGyroReady);
+    driveTab.addBoolean("Field Pose Initialized", this::isFieldPoseInitialized);
+    driveTab.addDouble("Latest Fused Vision Age (s)", this::getLastAcceptedVisionAgeSeconds);
+    driveTab.addDouble("Fused Vision Count", () -> m_visionMeasurementsApplied);
     driveTab.addBoolean("PathPlanner Ready", () -> m_pathPlannerConfigured);
 
     ShuffleboardTab debug = Shuffleboard.getTab("Debug");
@@ -244,6 +256,25 @@ public class DriveSubsystem extends SubsystemBase {
             m_rearRight.getPosition()
         },
         pose);
+    m_fieldPoseInitialized = true;
+  }
+
+  public boolean isFieldPoseInitialized() {
+    return m_fieldPoseInitialized;
+  }
+
+  public boolean isGyroReady() {
+    return m_gyro.isConnected() && !m_gyro.isCalibrating();
+  }
+
+  public double getLastAcceptedVisionAgeSeconds() {
+    return m_lastAcceptedVisionTime < 0.0 ? -1.0
+        : Timer.getFPGATimestamp() - m_lastAcceptedVisionTime;
+  }
+
+  public boolean hasRecentVision(double maxAgeSeconds) {
+    double age = getLastAcceptedVisionAgeSeconds();
+    return age >= 0.0 && age <= maxAgeSeconds;
   }
 
   /**
@@ -327,15 +358,27 @@ public class DriveSubsystem extends SubsystemBase {
   }
 
   /**
-   * Fuse a timestamped camera estimate into swerve/navX2 odometry.
-   * Single-tag estimates are assigned substantially larger uncertainty.
+   * Timestamped vision fusion; wheel+navX odometry remains authoritative
+   * between camera frames. Covariance is supplied by the validated vision
+   * observation based on tag range/count (FRC 5024/6328 pattern).
+   *
+   * Vision heading is deliberately assigned large uncertainty so that
+   * navX controls short-term heading; camera corrects field translation.
    */
-  public void addVisionMeasurement(Pose2d visionPose, double timestampSeconds, boolean multiTag) {
-    double xyStdDevMeters = multiTag ? 0.35 : 1.0;
-    double angleStdDevRadians = multiTag ? 0.5 : 2.0;
+  public void addVisionMeasurement(
+      Pose2d visionPose, double timestampSeconds,
+      double xyStdDevMeters, double thetaStdDevRadians) {
+    if (!m_fieldPoseInitialized
+        || !Double.isFinite(xyStdDevMeters)
+        || !Double.isFinite(thetaStdDevRadians)
+        || xyStdDevMeters <= 0.0 || thetaStdDevRadians <= 0.0) {
+      return;
+    }
     m_poseEstimator.addVisionMeasurement(
         visionPose, timestampSeconds,
-        VecBuilder.fill(xyStdDevMeters, xyStdDevMeters, angleStdDevRadians));
+        VecBuilder.fill(xyStdDevMeters, xyStdDevMeters, thetaStdDevRadians));
+    m_lastAcceptedVisionTime = Timer.getFPGATimestamp();
+    m_visionMeasurementsApplied++;
   }
 
   /** Resets the drive encoders to currently read a position of 0. */
