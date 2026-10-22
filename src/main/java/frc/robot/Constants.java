@@ -163,7 +163,7 @@ public final class Constants {
     public static final double DEFAULT_OUTPUT_PERCENT = 50.0;
     // Only direct duty-cycle output control; no RPM targets or tuning.
     public static final int CURRENT_LIMIT_AMPS = 20;
-    public static final double MAX_MOTOR_OUTPUT = 0.75;
+    public static final double MAX_MOTOR_OUTPUT = 1.0;
   }
 
   public static final class FeederConstants {
