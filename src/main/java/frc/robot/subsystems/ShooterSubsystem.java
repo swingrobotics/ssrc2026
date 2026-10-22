@@ -51,8 +51,10 @@ public class ShooterSubsystem extends SubsystemBase {
 
     stopShooter();
     var shooterTab = Shuffleboard.getTab("Shooter");
-    shooterTab.addDouble("Shooter Command (%)", this::getOutputPercent);
-    shooterTab.addBoolean("Shooter Running", this::isRunning);
+    shooterTab.addDouble("Shooter Command (%)", this::getOutputPercent)
+        .withPosition(0, 2).withSize(2, 1);
+    shooterTab.addBoolean("Shooter Running", this::isRunning)
+        .withPosition(4, 2);
   }
 
   /** Request percent output (0-75), preserving the original negative direction. */

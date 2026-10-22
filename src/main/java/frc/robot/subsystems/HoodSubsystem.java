@@ -90,9 +90,6 @@ public class HoodSubsystem extends SubsystemBase {
                         () -> !HoodConstants.CALIBRATION_MODE
                                 && Double.isFinite(holdTarget));
         Shuffleboard.getTab("Hood Diagnostics")
-                .addDouble("Hood Hold Target",
-                        () -> Double.isFinite(holdTarget) ? holdTarget : -1.0);
-        Shuffleboard.getTab("Hood Diagnostics")
                 .addDouble("Hood Hold Error",
                         () -> Double.isFinite(holdTarget) && isHoodReady()
                                 ? holdTarget - getEncoderPosition() : 0.0);
@@ -100,7 +97,7 @@ public class HoodSubsystem extends SubsystemBase {
                 .addDouble("Hood Auto/Hold Target", this::getTargetPosition);
         Shuffleboard.getTab("Hood")
                 .addBoolean("Hood At Target", this::isAtTargetPosition);
-        Shuffleboard.getTab("Hood")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addDouble("Hood Hold Output", () -> holdOutput);
         Shuffleboard.getTab("Hood Diagnostics")
                 .addDouble("Hood Gravity Assist Applied (%)",
