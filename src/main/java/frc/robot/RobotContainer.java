@@ -83,10 +83,13 @@ public class RobotContainer {
   private final GenericEntry m_driveSpeedEntry;
   private final GenericEntry m_shooterSpeedEntry;
   private final GenericEntry m_feederSpeedEntry;
+  private final GenericEntry m_feederTestEntry;
   private final GenericEntry m_shooterTargetRpmEntry;
   private final GenericEntry m_shooterRpmToleranceEntry;
   private boolean m_teleopShootCommandActive = false;
   private boolean m_manualFeederCommandActive = false;
+  private double m_feederDashboardTestDeadline = -1.0;
+  private String m_feederManualStatus = "IDLE";
   // Hood manual control remains independent until future measured calibration.
 
   // Autonomous commands set a request; subsystem default commands own the
@@ -192,6 +195,12 @@ public class RobotContainer {
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0))
         .withPosition(3, 0).withSize(3, 1).getEntry();
+    // This explicit momentary request is NOT the output slider. Any accepted
+    // request expires after 2 seconds and is rejected outside TELEOP.
+    m_feederTestEntry = shooterTab.add("Feeder Test (2 s)", false)
+        .withWidget(BuiltInWidgets.kToggleButton)
+        .withPosition(3, 3).withSize(2, 1).getEntry();
+    m_feederTestEntry.setBoolean(false); // never carry a prior latched request
     // A target RPM must be calibrated from the actual shaft encoder at the
     // selected shooter duty cycle. Zero allows reverse only (never forward).
     m_shooterTargetRpmEntry = shooterTab.add("Shooter Target RPM (calibrate)", 4000.0)
@@ -208,7 +217,9 @@ public class RobotContainer {
     shooterTab.addString("Feeder Direction", m_feeder::getDirection)
         .withPosition(6, 0).withSize(2, 1);
     shooterTab.addString("Shooter Feeder Status", this::getTeleopShooterFeederStatus)
-        .withPosition(0, 3).withSize(6, 1);
+        .withPosition(0, 3).withSize(3, 1);
+    shooterTab.addString("Feeder Manual Status", () -> m_feederManualStatus)
+        .withPosition(0, 4).withSize(7, 1);
 
     // Button/robot state troubleshooting is separated from operator controls.
     ShuffleboardTab mechanismDebug = Shuffleboard.getTab("Mechanism Diagnostics");
@@ -217,6 +228,17 @@ public class RobotContainer {
     mechanismDebug.addBoolean("Teleop Enabled", DriverStation::isTeleopEnabled);
     mechanismDebug.addBoolean("B Shoot Command Active", () -> m_teleopShootCommandActive);
     mechanismDebug.addBoolean("A Feeder-Only Active", () -> m_manualFeederCommandActive);
+    mechanismDebug.addBoolean("Controller Port 0 Connected",
+        () -> DriverStation.isJoystickConnected(OIConstants.kDriverControllerPort));
+    mechanismDebug.addString("Controller Port 0 Name",
+        () -> DriverStation.getJoystickName(OIConstants.kDriverControllerPort));
+    mechanismDebug.addBoolean("Raw Button 1 (A)",
+        () -> m_driverController.getRawButton(1));
+    mechanismDebug.addBoolean("Feeder Dashboard Test Active", () ->
+        TeleopFeederControl.isDashboardTestActive(
+            Timer.getFPGATimestamp(), m_feederDashboardTestDeadline));
+    mechanismDebug.addDouble("Feeder Speed Setpoint (%)",
+        () -> getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent) * 100.0);
 
     // No automatic RPM motor control; teleop feeder on A is manual.
     // The shooter RPM target is retained for autonomous shot safety checks.
@@ -422,6 +444,12 @@ public class RobotContainer {
         m_shooter.stopShooter();
       }
     }, m_shooter));
+
+    // Own the feeder continuously in an independent command so A and the
+    // short-lived dashboard test share exactly the same stop/speed logic.
+    // Existing autonomous feeder commands take the feeder requirement and
+    // preempt this default command while their own safety gates apply.
+    m_feeder.setDefaultCommand(new RunCommand(this::updateManualFeeder, m_feeder));
   }
 
   /** Read a 0-100% Shuffleboard slider and safely convert to an output multiplier. */
@@ -455,15 +483,19 @@ public class RobotContainer {
     if (!DriverStation.isTeleopEnabled()) return "BLOCKED: TELEOP NOT ENABLED";
     boolean a = m_driverController.getAButton();
     boolean b = m_driverController.getBButton();
-    if (!a && !b) return "IDLE: HOLD A FOR FEEDER, B FOR SHOOTER";
+    boolean dashboardTest = TeleopFeederControl.isDashboardTestActive(
+        Timer.getFPGATimestamp(), m_feederDashboardTestDeadline);
+    if (!a && !b && !dashboardTest)
+      return "IDLE: A=FEEDER, B=SHOOTER, OR USE 2s FEEDER TEST";
     String shooter = b
         ? (m_teleopShootCommandActive && m_shooter.isRunning()
             ? "SHOOTER RUNNING" : "SHOOTER WAITING / ZERO OUTPUT")
         : "SHOOTER OFF";
-    String feeder = a
-        ? (m_manualFeederCommandActive && m_feeder.isFeeding()
-            ? "FEEDER " + m_feeder.getDirection() : "FEEDER WAITING / ZERO OUTPUT")
-        : "FEEDER OFF";
+    boolean dashboard = TeleopFeederControl.isDashboardTestActive(
+        Timer.getFPGATimestamp(), m_feederDashboardTestDeadline);
+    String feeder = (a || dashboard)
+        ? (m_feeder.isFeeding() ? "FEEDER " + m_feeder.getDirection()
+            : "FEEDER WAITING / ZERO OUTPUT") : "FEEDER OFF";
     return shooter + " | " + feeder;
   }
 
@@ -995,21 +1027,8 @@ public class RobotContainer {
             },
             m_shooter));
 
-    // A controls ONLY forward feeder output, independent of B and shooter RPM.
-    // Releasing A stops the feeder, not the shooter.
-    new Trigger(() -> DriverStation.isTeleopEnabled()
-        && m_driverController.getAButton())
-        .whileTrue(Commands.runEnd(
-            () -> {
-              m_manualFeederCommandActive = true;
-              m_feeder.runFeeder(
-                  getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent));
-            },
-            () -> {
-              m_feeder.stopFeeder();
-              m_manualFeederCommandActive = false;
-            },
-            m_feeder));
+    // Feeder A-button and timed dashboard test are handled by the feeder's
+    // default command, independently of this shooter-only B trigger.
 
     // Move the original A/B toggle functions to unused X/Y buttons.
     new JoystickButton(m_driverController, XboxController.Button.kX.value)
@@ -1142,10 +1161,59 @@ public class RobotContainer {
     }
   }
 
+  /**
+   * Single owner for teleop manual feeding. The speed slider sets output only;
+   * the A button or explicitly pressed 2s test button starts motion.
+   * Neither source has an effect outside TELEOP. Autonomous owns its own
+   * feeder command whenever a NamedCommand requires this subsystem.
+   */
+  private void updateManualFeeder() {
+    if (!DriverStation.isTeleopEnabled()) {
+      m_manualFeederCommandActive = false;
+      m_feederDashboardTestDeadline = -1.0;
+      m_feeder.stopFeeder();
+      m_feederManualStatus = "BLOCKED: TELEOP NOT ENABLED";
+      return;
+    }
+    boolean aPressed = m_driverController.getAButton();
+    boolean timedTest = TeleopFeederControl.isDashboardTestActive(
+        Timer.getFPGATimestamp(), m_feederDashboardTestDeadline);
+    double output = TeleopFeederControl.selectOutput(
+        true, aPressed, timedTest, m_feederSpeedEntry.getDouble(kDefaultFeederPercent));
+    if (output > 0.0) m_feeder.runFeeder(output);
+    else m_feeder.stopFeeder();
+    m_manualFeederCommandActive = aPressed && m_feeder.isFeeding();
+    if (output <= 0.0 && (aPressed || timedTest)) {
+      m_feederManualStatus = "BLOCKED: FEEDER SPEED IS ZERO OR INVALID";
+    } else if (aPressed) {
+      m_feederManualStatus = "A BUTTON: FORWARD";
+    } else if (timedTest) {
+      m_feederManualStatus = "DASHBOARD TEST: FORWARD (AUTO STOP)";
+    } else {
+      m_feederManualStatus = "IDLE: HOLD A OR PRESS FEEDER TEST (2 s)";
+    }
+  }
+
+  /** A rising dashboard request starts a bounded test; never latch motor on. */
+  private void updateFeederDashboardTest() {
+    if (!DriverStation.isTeleopEnabled()) {
+      m_feederDashboardTestDeadline = -1.0;
+    }
+    if (!m_feederTestEntry.getBoolean(false)) return;
+    m_feederTestEntry.setBoolean(false);
+    if (DriverStation.isTeleopEnabled()) {
+      m_feederDashboardTestDeadline =
+          Timer.getFPGATimestamp() + TeleopFeederControl.DASHBOARD_TEST_SECONDS;
+    } else {
+      m_feederManualStatus = "TEST REJECTED: ENABLE TELEOP FIRST";
+    }
+  }
+
   /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
   public void updateDashboard() {
     // Keep trim preview and its settling reset current even while disabled.
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
+    updateFeederDashboardTest();
     updateVisionTarget();
     updateHubAimPreview();
     updateHoodDistancePreview();

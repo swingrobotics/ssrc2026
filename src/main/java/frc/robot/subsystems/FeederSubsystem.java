@@ -43,6 +43,14 @@ public class FeederSubsystem extends SubsystemBase {
     ShuffleboardTab debugTab = Shuffleboard.getTab("Mechanism Diagnostics");
     debugTab.addBoolean("Feeder Enabled", DriverStation::isEnabled);
     debugTab.addBoolean("Feeder Command Active", this::isFeeding);
+    // Compare the command with real SPARK feedback to distinguish input,
+    // dashboard speed, missing hardware and motor/controller problems.
+    debugTab.addDouble("Feeder CAN 11 Applied (%)",
+        () -> feeder11.getAppliedOutput() * 100.0);
+    debugTab.addDouble("Feeder CAN 14 Applied (%)",
+        () -> feeder14.getAppliedOutput() * 100.0);
+    debugTab.addDouble("Feeder CAN 11 Current (A)", feeder11::getOutputCurrent);
+    debugTab.addDouble("Feeder CAN 14 Current (A)", feeder14::getOutputCurrent);
   }
 
   public boolean isFeedAllowed() {

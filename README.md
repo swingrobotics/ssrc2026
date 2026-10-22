@@ -26,7 +26,7 @@ Check the actual direction, wiring and mechanical limits before enabling motion.
 | Tab | Purpose |
 | --- | --- |
 | Drive | Driving controls, field pose and autonomous chooser |
-| Shooter | Shooter and feeder output settings / readiness |
+| Shooter | Shooter and feeder output settings, independent 2-second feeder test button, live command/status |
 | Shot Tuning | Gated autonomous firing setup and status |
 | Hood | Hood command/hold overview |
 | Intake / Intake Arm | Roller and arm diagnostics |
@@ -35,6 +35,8 @@ Check the actual direction, wiring and mechanical limits before enabling motion.
 | Drive Diagnostics | navX2, robot velocity and per-module telemetry |
 | PathPlanner Diagnostics | Active path and trajectory-following data |
 | Hood Diagnostics | Encoder and motion-limit diagnostics |
+
+**Feeder troubleshooting:** `Feeder Speed (%)` is only the requested duty-cycle percentage; moving the slider does **not** turn on the motor. While TELEOP is enabled, hold A or tap `Shooter > Feeder Test (2 s)`, which automatically clears and stops within 2 seconds unless A is held. Verify `Mechanism Diagnostics > Controller Port 0 Connected`, `Raw Button 1 (A)`, `Feeder Speed Setpoint (%)`, `Feeder Command Active`, and `Feeder CAN 11/14 Applied (%)`. This helps distinguish wrong controller mode, slider=0, scheduler state, and CAN/motor wiring. The test does not override Disabled or Autonomous, and A/B remain independent. Keep the feeder clear of game pieces until its direction and actual hardware are verified.
 
 **Dashboard layouts can retain old widgets from previous code versions.** If a removed widget remains visible, delete it from the saved Shuffleboard layout; code changes alone do not necessarily clear the saved client layout.
 
