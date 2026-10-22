@@ -83,6 +83,7 @@ public class RobotContainer {
   private final GenericEntry m_shooterTargetRpmEntry;
   private final GenericEntry m_shooterRpmToleranceEntry;
   private boolean m_teleopFeedForward = false;
+  private boolean m_teleopShootCommandActive = false;
   // Hood manual control remains independent until future measured calibration.
 
   // Autonomous commands set a request; subsystem default commands own the
@@ -176,7 +177,7 @@ public class RobotContainer {
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
     // A target RPM must be calibrated from the actual shaft encoder at the
-    // selected shooter duty cycle. Zero disables automatic feeder motion.
+    // selected shooter duty cycle. Zero allows reverse only (never forward).
     m_shooterTargetRpmEntry = shooterTab.add("Shooter Target RPM (calibrate)", 0.0).getEntry();
     m_shooterRpmToleranceEntry = shooterTab.add("Feed RPM Tolerance", 150.0)
         .withWidget(BuiltInWidgets.kNumberSlider)
@@ -185,6 +186,10 @@ public class RobotContainer {
     shooterTab.addBoolean("Shooter At Target RPM",
         () -> m_shooter.isAtTargetRPM(getShooterTargetRPM(), getShooterRpmTolerance()));
     shooterTab.addString("Feeder Direction", () -> m_feeder.getDirection());
+    shooterTab.addBoolean("Driver B Pressed", m_driverController::getBButton);
+    shooterTab.addBoolean("Teleop Enabled", DriverStation::isTeleopEnabled);
+    shooterTab.addBoolean("B Shoot Command Active", () -> m_teleopShootCommandActive);
+    shooterTab.addString("Shooter Feeder Status", this::getTeleopShooterFeederStatus);
 
     // No automatic RPM motor control; only the feeder uses measured RPM.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
@@ -377,13 +382,47 @@ public class RobotContainer {
 
   private double getShooterTargetRPM() {
     double target = m_shooterTargetRpmEntry.getDouble(0.0);
-    return Double.isFinite(target) && target > 0.0 ? target : 0.0;
+    // Zero means no calibrated RPM yet; negative/nonfinite settings are invalid.
+    return Double.isFinite(target) && target >= 0.0 ? target : Double.NaN;
   }
 
   private double getShooterRpmTolerance() {
     double tolerance = m_shooterRpmToleranceEntry.getDouble(150.0);
     return Double.isFinite(tolerance) && tolerance > 0.0
         ? MathUtil.clamp(tolerance, 1.0, 500.0) : 0.0;
+  }
+
+  /** Explains why B is not driving the shooter/feeder during teleop. */
+  private String getTeleopShooterFeederStatus() {
+    if (!DriverStation.isTeleopEnabled()) {
+      return "BLOCKED: TELEOP NOT ENABLED";
+    }
+    if (!m_driverController.getBButton()) {
+      return "IDLE: HOLD B";
+    }
+    if (!m_teleopShootCommandActive) {
+      return "BLOCKED: B COMMAND NOT RUNNING";
+    }
+    if (!m_shooter.isRunning()) {
+      return "BLOCKED: SHOOTER OUTPUT IS ZERO";
+    }
+    if (getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent) <= 0.0) {
+      return "BLOCKED: FEEDER SPEED IS ZERO";
+    }
+    double rpm = m_shooter.getActualRPM();
+    if (!Double.isFinite(rpm) || rpm < 0.0) {
+      return "BLOCKED: SHOOTER RPM INVALID / DIRECTION";
+    }
+    double target = getShooterTargetRPM();
+    double tolerance = getShooterRpmTolerance();
+    if (!Double.isFinite(target) || tolerance <= 0.0
+        || (target > 0.0 && target <= 2.0 * tolerance)) {
+      return "BLOCKED: INVALID RPM TARGET / TOLERANCE";
+    }
+    if (target == 0.0) {
+      return "REVERSE ONLY: CALIBRATE TARGET RPM";
+    }
+    return "ACTIVE: " + m_feeder.getDirection();
   }
 
   /**
@@ -899,6 +938,7 @@ public class RobotContainer {
     new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
+              m_teleopShootCommandActive = true;
               m_shooter.setOutputPercent(getShooterOutputPercent(m_shooterSpeedEntry));
               ShooterFeedController.Direction direction = ShooterFeedController.select(
                   DriverStation.isTeleopEnabled() && m_shooter.isRunning(),
@@ -921,6 +961,7 @@ public class RobotContainer {
               m_feeder.stopFeeder();
               m_shooter.stopShooter();
               m_teleopFeedForward = false;
+              m_teleopShootCommandActive = false;
             },
             m_shooter, m_feeder));
 
