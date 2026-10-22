@@ -8,7 +8,7 @@ Active development branch: `hub-pose-fusion-2026`. Java/WPILib 2026 command-base
 | --- | --- |
 | Left stick | Robot-relative swerve translation by default |
 | Left/right triggers | Manual chassis rotation when HUB align is off |
-| X (press) | Toggle HUB-center heading alignment; translation remains manual |
+| X (press) | Request HUB aiming; automatic chassis rotation stays locked while a swerve wheel is faulty |
 | Y (press) | Toggle robot-relative / field-relative translation |
 | A (hold) | Request feeder; flywheel readiness interlock applies |
 | B (hold) | Shooter motor output |
@@ -78,3 +78,13 @@ These commands do **not** deploy to the robot. Deployment and physical tests are
 - `vendordeps/`: robot dependencies.
 
 This project was originally based on REV's MAXSwerve Java template. The original REV/WPILib license files and upstream changelog are retained for attribution and historical reference.
+
+## HUB automatic aiming V2 (2026-10-23)
+
+The new active classes are `HubAimTargetV2` and `HubAimHeadingV2`.
+They reconstruct the HUB center using individual AprilTag 3D SolvePnP estimates, verify the data, reject conflicting targets, and calculate wrapped heading with a profiled controller. Legacy classes remain source-only to avoid losing work.
+
+**Current safety interlock:** `Constants.HubAimSafety.ENABLE_AUTO_ROTATION = false`.
+Pressing X may request aiming but cannot produce automatic rotation while a swerve module is faulty. Diagnostic heading previews are available in the Vision tab after camera geometry is independently verified. The switch is deliberately not editable in Shuffleboard.
+
+Before considering enabling rotation: fix and validate all four modules and the navX; calibrate/check PhotonVision intrinsics and camera-to-robot 3D pose; check official HUB tag layout, target heading and observed distance with the robot Disabled; inspect X-button and telemetry status. Unit tests are not a physical drivetrain test.

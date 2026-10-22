@@ -303,3 +303,13 @@ requires separate calibration and validation.
 - The former `TestAutoWithShooter.auto` was archived under `docs/pathplanner-drafts/` because its `shoot 1` and `shoot 2` path files are missing. The original draft is preserved; it is not selectable as a deployed autonomous routine until complete. `TestAuto.auto` remains and its paths are present.
 - Intake roller CAN IDs 16 and 17 were restored from the former `shooter-integration` branch. The arm CAN 15 configuration and physical directions/limits still require robot-level verification.
 - The current `HoodDistanceCalculator` and `HubDistanceCalculator` are isolated tested geometry utilities; neither is currently wired into automatic hood positioning. Do not treat their existence as an enabled distance-to-hood feature.
+
+## HUB aim V2 rebuild (2026-10-23)
+
+Active targeting: `HubAimTargetV2` (individual AprilTag 3D measurement to official HUB center, timestamped local odometry, consensus/outlier rejection, 0.25 s freshness), `HubAimHeadingV2` (wrapped HUB yaw, 45 deg/s turn limit, 90 deg/s² acceleration limit, stable alignment and dashboard geometry preview).
+The older `HubRelativeTarget` and `HubCenterAlign` implementations are retained in source and not used by RobotContainer. Global field pose fusion, PathPlanner and shooter/feeder/hood/intake logic remain unchanged.
+
+**CRITICAL:** One swerve wheel is reported faulty. `HubAimSafety.ENABLE_AUTO_ROTATION=false` blocks chassis auto rotation even if X is pressed or dashboard verification is enabled; no dashboard override. The Vision tab reports the lock and calculates geometry preview only. No motion validation has been performed.
+
+Before review of this code lock: repair drive+turn module; verify gyro/pose and Swerve state in stationary and slow tests supervised by the team; verify PhotonVision camera physical position, orientation and single-target 3D SolvePnP; use the same Welded/AndyMark tag layout as the real field; compare target angle and distance against physical measurements while Disabled. The expected `Input Orientation=180 deg` does not guarantee that the 3D camera pose is correct.
+Design references: Storm4107/2026-Rebuilt; Team6940/2026Rebuilt; WPILib ProfiledPIDController; PhotonVision individual camera-to-target and MultiTag documentation.

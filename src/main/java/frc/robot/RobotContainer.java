@@ -131,11 +131,10 @@ public class RobotContainer {
   private final PhotonCamera m_photonCamera = new PhotonCamera(VisionConstants.CAMERA_NAME);
   private final PhotonPoseEstimator m_photonPoseEstimator =
       new PhotonPoseEstimator(VisionConstants.FIELD_LAYOUT, VisionConstants.ROBOT_TO_CAMERA);
-  private final HubCenterAlign m_hubCenterAlign = new HubCenterAlign();
-  // FRC 4107: local cameraToTag -> tagToHUB computation. This does not
-  // require field pose initialization; odometry only compensates latency.
-  private final HubRelativeTarget m_hubRelativeTarget =
-      new HubRelativeTarget(VisionConstants.FIELD_LAYOUT);
+  private final HubAimHeadingV2 m_hubCenterAlign = new HubAimHeadingV2();
+  // Independent V2 direct HUB tracking; no global field pose seed needed.
+  private final HubAimTargetV2 m_hubRelativeTarget =
+      new HubAimTargetV2(VisionConstants.FIELD_LAYOUT);
 
   // Driving mode. False keeps robot-relative translation by default.
   private boolean m_fieldRelativeEnabled = false;
@@ -315,6 +314,12 @@ public class RobotContainer {
     visionTab.addString("Alliance",
         () -> DriverStation.getAlliance().map(Enum::name).orElse("UNKNOWN"));
     visionTab.addString("HUB Align Status", m_hubCenterAlign::getStatus);
+    visionTab.addBoolean("HUB Auto Turn Armed (code)",
+        () -> Constants.HubAimSafety.ENABLE_AUTO_ROTATION);
+    visionTab.addString("HUB Safety Status", () ->
+        Constants.HubAimSafety.ENABLE_AUTO_ROTATION
+            ? "AUTO ROTATION ARMED: VERIFY SWERVE"
+            : "PREVIEW ONLY - REPAIR SWERVE WHEEL FIRST");
     visionTab.addString("HUB Aim Source", m_hubCenterAlign::getSource);
     visionDebugTab.addString("HUB Direct Status", m_hubRelativeTarget::getStatus);
     visionTab.addBoolean("HUB Direct Fresh",
@@ -897,6 +902,8 @@ public class RobotContainer {
   private String getHubRotationBlocker() {
     if (!DriverStation.isTeleopEnabled()) return "TELEOP NOT ENABLED";
     if (!m_visionAlignEnabled) return "X: HUB ALIGN IS OFF";
+    if (!Constants.HubAimSafety.ENABLE_AUTO_ROTATION)
+      return "HUB ROTATION LOCKED IN CODE: WHEEL REPAIR REQUIRED";
     if (!m_robotDrive.isGyroReady()) return "NAVX NOT CONNECTED OR CALIBRATING";
 
     boolean directFresh = m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp());
@@ -938,6 +945,11 @@ public class RobotContainer {
     if (!m_visionAlignEnabled) {
       m_lastHubTurnOutput = 0.0;
       return getTriggerRotation();
+    }
+    // X can request/preview aiming but cannot rotate a chassis with a bad wheel.
+    if (!Constants.HubAimSafety.ENABLE_AUTO_ROTATION) {
+      m_lastHubTurnOutput = 0.0;
+      return 0.0;
     }
 
     if (m_directHubGeometryEntry.getBoolean(false)
@@ -1118,11 +1130,40 @@ public class RobotContainer {
         : "PREVIEW ONLY - HOOD SENSOR/LIMITS NOT READY";
   }
 
+  /**
+   * Geometry-only preview works while Disabled; no automatic motor outputs.
+   * A valid recent tag and verified physical camera geometry are required.
+   */
+  private void updateHubAimPreview() {
+    if (Constants.HubAimSafety.ENABLE_AUTO_ROTATION
+        && DriverStation.isTeleopEnabled() && m_visionAlignEnabled) return;
+    if (!m_robotDrive.isGyroReady()) {
+      m_hubCenterAlign.stop();
+      return;
+    }
+    double now = Timer.getFPGATimestamp();
+    Pose2d pose = m_robotDrive.getPose();
+    if (m_directHubGeometryEntry.getBoolean(false)
+        && m_hubRelativeTarget.isFresh(now)) {
+      m_hubRelativeTarget.getHubInOdometryFrame(now).ifPresent(hub ->
+          m_hubCenterAlign.previewOnly(pose, hub, "V2 DIRECT TAG"));
+    } else if (m_fieldVerifiedEntry.getBoolean(false)
+        && m_robotDrive.isFieldPoseInitialized()
+        && m_robotDrive.hasRecentVision(1.0)
+        && DriverStation.getAlliance().isPresent()) {
+      m_hubCenterAlign.previewOnly(pose, HubAimHeadingV2.hubForAlliance(
+          DriverStation.getAlliance().orElseThrow()), "V2 FIELD POSE");
+    } else {
+      m_hubCenterAlign.stop();
+    }
+  }
+
   /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
   public void updateDashboard() {
     // Keep trim preview and its settling reset current even while disabled.
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     updateVisionTarget();
+    updateHubAimPreview();
     updateHoodDistancePreview();
   }
 
