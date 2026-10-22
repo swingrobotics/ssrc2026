@@ -14,6 +14,8 @@ import edu.wpi.first.hal.FRCNetComm.tInstances;
 import edu.wpi.first.hal.FRCNetComm.tResourceType;
 import edu.wpi.first.hal.HAL;
 import edu.wpi.first.math.VecBuilder;
+import edu.wpi.first.math.interpolation.TimeInterpolatableBuffer;
+import java.util.Optional;
 import edu.wpi.first.math.estimator.SwerveDrivePoseEstimator;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Rotation2d;
@@ -72,6 +74,10 @@ public class DriveSubsystem extends SubsystemBase {
   private boolean m_fieldPoseInitialized = false;
   private double m_lastAcceptedVisionTime = -1.0;
   private long m_visionMeasurementsApplied = 0;
+  // PhotonVision frames describe the PAST: rewind robot pose to capture time
+  // before transforming any camera-to-HUB measurement into odometry coordinates.
+  private final TimeInterpolatableBuffer<Pose2d> m_poseHistory =
+      TimeInterpolatableBuffer.createBuffer(1.0);
 
   // Swerve/navX2 odometry with optional, latency-compensated vision fusion.
   private final SwerveDrivePoseEstimator m_poseEstimator = new SwerveDrivePoseEstimator(
@@ -195,6 +201,7 @@ public class DriveSubsystem extends SubsystemBase {
             m_rearLeft.getPosition(),
             m_rearRight.getPosition()
         });
+    m_poseHistory.addSample(Timer.getFPGATimestamp(), getPose());
 
     // Update the field visualization. Other values are live Shuffleboard suppliers.
     m_field.setRobotPose(getPose());
@@ -241,6 +248,11 @@ public class DriveSubsystem extends SubsystemBase {
     return m_poseEstimator.getEstimatedPosition();
   }
 
+  /** Robot field/local odometry pose at the camera exposure timestamp. */
+  public Optional<Pose2d> getPoseAtTime(double timestampSeconds) {
+    return m_poseHistory.getSample(timestampSeconds);
+  }
+
   /**
    * Resets the odometry to the specified pose.
    *
@@ -256,6 +268,10 @@ public class DriveSubsystem extends SubsystemBase {
             m_rearRight.getPosition()
         },
         pose);
+    // Never replay a HUB observation from the old odometry reference frame.
+    m_poseHistory.clear();
+    m_poseHistory.addSample(Timer.getFPGATimestamp(), getPose());
+    m_lastAcceptedVisionTime = -1.0;
     m_fieldPoseInitialized = true;
   }
 
