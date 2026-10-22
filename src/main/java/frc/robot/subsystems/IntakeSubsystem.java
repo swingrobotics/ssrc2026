@@ -8,7 +8,8 @@ import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.config.SparkMaxConfig;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
+import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.IntakeConstants;
 
@@ -20,7 +21,7 @@ import frc.robot.Constants.IntakeConstants;
  * shaft directions, not a verified game-piece intake direction: check the
  * actual roller motion on the assembled mechanism before regular operation.
  *
- * No button is bound yet; the operator mapping and both CAN IDs are pending.
+ * Hold the driver controller's left bumper to intake; the motor CAN IDs are 16/17.
  */
 public class IntakeSubsystem extends SubsystemBase {
   private final SparkMax leftMotor;
@@ -35,8 +36,15 @@ public class IntakeSubsystem extends SubsystemBase {
     configured = isValidCanId(leftId)
         && isValidCanId(rightId)
         && leftId != rightId;
-    SmartDashboard.putBoolean("Intake Configured", configured);
-    SmartDashboard.putNumber("Intake Commanded Output", 0.0);
+    ShuffleboardTab intakeTab = Shuffleboard.getTab("Intake");
+    intakeTab.addBoolean("Intake Configured", this::isConfigured);
+    intakeTab.addDouble("Intake Output (%)", () -> commandedOutput * 100.0);
+    intakeTab.addDouble("Left Motor CAN ID", () -> IntakeConstants.LEFT_CAN_ID);
+    intakeTab.addDouble("Right Motor CAN ID", () -> IntakeConstants.RIGHT_CAN_ID);
+    intakeTab.addDouble("Left Motor Current (A)",
+        () -> configured ? leftMotor.getOutputCurrent() : 0.0);
+    intakeTab.addDouble("Right Motor Current (A)",
+        () -> configured ? rightMotor.getOutputCurrent() : 0.0);
 
     if (!configured) {
       // Do not construct Spark MAX objects with placeholders or duplicate IDs.
@@ -92,7 +100,6 @@ public class IntakeSubsystem extends SubsystemBase {
         output, -IntakeConstants.MAX_OUTPUT, IntakeConstants.MAX_OUTPUT);
     leftMotor.set(commandedOutput);
     rightMotor.set(-commandedOutput);
-    SmartDashboard.putNumber("Intake Commanded Output", commandedOutput);
   }
 
   /** Run the rollers using the conservative default speed. */
@@ -114,7 +121,6 @@ public class IntakeSubsystem extends SubsystemBase {
     if (rightMotor != null) {
       rightMotor.stopMotor();
     }
-    SmartDashboard.putNumber("Intake Commanded Output", 0.0);
   }
 
   public double getCommandedOutput() {
