@@ -179,14 +179,32 @@ public final class Constants {
     public static final AprilTagFieldLayout FIELD_LAYOUT =
         AprilTagFieldLayout.loadField(AprilTagFields.k2026RebuiltWelded);
 
-    // Previously measured on this robot, in WPILib robot coordinates:
-    // X forward, Y left, Z up. Verify the optical axis/pitch with a known tag.
+    // Reported physical mounting (2026-10-22):
+    //   - Optical axis points UP 25 degrees relative to robot +X.
+    //   - Camera housing/sensor is installed UPSIDE DOWN (180 degree roll).
+    //   - PhotonVision pipeline Input > Orientation is set to 180 degrees,
+    //     rotating the image BEFORE AprilTag 3-D processing. Treat the
+    //     output as the VIRTUAL upright camera frame, not the raw sensor.
+    //   - WPILib +Y pitch tilts the optical axis DOWN: UP 25 => pitch -25.
+    //
+    // IMPORTANT: Do not also blindly add 180 degrees to ROBOT_TO_CAMERA
+    // roll while PhotonVision applies an image rotation. Verify the
+    // resulting per-tag 3-D transform with a physical AprilTag at a known
+    // HEIGHT and location. If that check contradicts the virtual-frame
+    // assumption, correct the convention instead of compensating aim trim.
+    //
+    // Position values are PREVIOUSLY REPORTED, not freshly measured today.
+    // Robot frame: X forward, Y left, Z up (meters).
     public static final double CAMERA_FORWARD_M = 0.31732884884;
     public static final double CAMERA_LEFT_M = 0.0;
     public static final double CAMERA_UP_M = 0.40394608582;
+    // Effective processed-frame roll; physical sensor roll is 180.
     public static final double CAMERA_ROLL_DEG = 0.0;
     public static final double CAMERA_PITCH_DEG = -25.0;
     public static final double CAMERA_YAW_DEG = 0.0;
+    // Documentation of expected manual PhotonVision UI setting.
+    // This value does NOT set PhotonVision through PhotonLib.
+    public static final double EXPECTED_PHOTONVISION_IMAGE_ORIENTATION_DEG = 180.0;
     public static final Transform3d ROBOT_TO_CAMERA = new Transform3d(
         new Translation3d(CAMERA_FORWARD_M, CAMERA_LEFT_M, CAMERA_UP_M),
         new Rotation3d(Math.toRadians(CAMERA_ROLL_DEG),
