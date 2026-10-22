@@ -172,7 +172,7 @@ public final class Constants {
     public static final double VELOCITY_KI = 0.0;
     public static final double VELOCITY_KD = 0.0;
     // Limits are independent of closed-loop regulation.
-    public static final int CURRENT_LIMIT_AMPS = 20;
+    public static final int CURRENT_LIMIT_AMPS = 40;
     public static final double MAX_MOTOR_OUTPUT = 1.0;
   }
 

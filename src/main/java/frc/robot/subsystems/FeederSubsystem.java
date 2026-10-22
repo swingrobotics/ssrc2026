@@ -27,12 +27,12 @@ public class FeederSubsystem extends SubsystemBase {
 
   public FeederSubsystem() {
     SparkMaxConfig feeder11Config = new SparkMaxConfig();
-    feeder11Config.idleMode(IdleMode.kCoast).smartCurrentLimit(20);
+    feeder11Config.idleMode(IdleMode.kCoast).smartCurrentLimit(40);
     feeder11.configure(feeder11Config, ResetMode.kResetSafeParameters,
         PersistMode.kPersistParameters);
 
     SparkMaxConfig feeder14Config = new SparkMaxConfig();
-    feeder14Config.follow(feeder11, true).idleMode(IdleMode.kCoast).smartCurrentLimit(20);
+    feeder14Config.follow(feeder11, true).idleMode(IdleMode.kCoast).smartCurrentLimit(40);
     feeder14.configure(feeder14Config, ResetMode.kResetSafeParameters,
         PersistMode.kPersistParameters);
 
