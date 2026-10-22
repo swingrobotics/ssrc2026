@@ -55,8 +55,6 @@ import java.util.Optional;
  */
 public class RobotContainer {
   private static final double kDefaultDrivePercent = 100.0;
-  private static final double kV3TrialMaxTurn = 0.08;
-  private static final double kV3TrialMaxTranslate = 0.20;
 
   // Measured chassis speed thresholds for a stationary autonomous shot.
   // These are provisional, conservative starting values to validate on robot.
@@ -110,7 +108,6 @@ public class RobotContainer {
   private final GenericEntry m_fieldVerifiedEntry;
   private final GenericEntry m_directHubGeometryEntry;
   private final GenericEntry m_hubAimTrimEntry;
-  private final GenericEntry m_v3TrialArmEntry;
   // Preview-only distance-to-hood calibration; these do not command motors.
   private final GenericEntry m_hoodNearDistanceEntry;
   private final GenericEntry m_hoodNearEncoderEntry;
@@ -339,21 +336,13 @@ public class RobotContainer {
     visionTab.addString("Alliance",
         () -> DriverStation.getAlliance().map(Enum::name).orElse("UNKNOWN"));
     visionTab.addString("HUB Align Status", m_hubCenterAlign::getStatus);
-    visionTab.addBoolean("HUB Auto Turn Armed (code)",
-        () -> Constants.HubAimSafety.ENABLE_AUTO_ROTATION);
-    visionTab.addString("HUB Safety Status", () ->
-        Constants.HubAimSafety.ENABLE_AUTO_ROTATION
-            ? "AUTO ROTATION ARMED: VERIFY SWERVE"
-            : "V3 PREVIEW ONLY - CAMERA GEOMETRY UNVERIFIED");
+    visionTab.addBoolean("HUB Auto Aim Active", () -> m_visionAlignEnabled);
+    visionTab.addString("HUB Safety Status", this::getHubRotationBlocker);
     visionTab.addString("HUB Aim Source", m_hubCenterAlign::getSource);
     // Read-only V3 numbers have their OWN tab, separate from V2 diagnostics.
     ShuffleboardTab hubV3Tab = Shuffleboard.getTab("HUB V3");
-    m_v3TrialArmEntry = hubV3Tab.add("V3 Low-Speed Test Arm", false)
-        .withWidget(BuiltInWidgets.kToggleButton).withPosition(0, 5)
-        .withSize(4, 1).getEntry();
-    m_v3TrialArmEntry.setBoolean(false);
-    hubV3Tab.addString("V3 Test Blocker", this::getHubRotationBlocker)
-        .withPosition(0, 6).withSize(8, 1);
+    hubV3Tab.addString("V3 Auto Aim Status", this::getHubRotationBlocker)
+        .withPosition(0, 5).withSize(8, 1);
     hubV3Tab.addString("V3 Tracking State",
         () -> m_hubTrackerV3.getStatus(Timer.getFPGATimestamp()))
         .withPosition(0, 0).withSize(4, 1);
@@ -395,8 +384,8 @@ public class RobotContainer {
     hubV3Tab.addBoolean("V3 Geometry Verified",
         () -> m_directHubGeometryEntry.getBoolean(false))
         .withPosition(4, 3).withSize(2, 1);
-    hubV3Tab.addBoolean("V3 Auto Turn Armed",
-        () -> m_v3TrialArmEntry.getBoolean(false))
+    hubV3Tab.addBoolean("V3 Auto Aim Active",
+        () -> m_visionAlignEnabled)
         .withPosition(6, 3).withSize(2, 1);
     hubV3Tab.addString("V3 Last Rejection", m_hubTrackerV3::getLastRejection)
         .withPosition(0, 4).withSize(6, 1);
@@ -529,10 +518,9 @@ public class RobotContainer {
                 return;
               }
               double scale = getOutputScale(m_driveSpeedEntry, kDefaultDrivePercent);
-              double translationScale = isV3TrialActive() ? Math.min(scale, kV3TrialMaxTranslate) : scale;
               m_robotDrive.drive(
-                  -translationScale * MathUtil.applyDeadband(m_driverController.getLeftY(), OIConstants.kDriveDeadband),
-                  -translationScale * MathUtil.applyDeadband(m_driverController.getLeftX(), OIConstants.kDriveDeadband),
+                  -scale * MathUtil.applyDeadband(m_driverController.getLeftY(), OIConstants.kDriveDeadband),
+                  -scale * MathUtil.applyDeadband(m_driverController.getLeftX(), OIConstants.kDriveDeadband),
                   scale * getDriveRotationCommand(),
                   m_fieldRelativeEnabled);
             },
@@ -1023,47 +1011,31 @@ public class RobotContainer {
 
 
 
-  private boolean isV3TrialActive() {
-    return DriverStation.isTeleopEnabled() && m_visionAlignEnabled
-        && m_v3TrialArmEntry.getBoolean(false);
-  }
-
-  static double capV3TrialTurn(double value) {
-    return Double.isFinite(value) ? MathUtil.clamp(value,
-        -kV3TrialMaxTurn, kV3TrialMaxTurn) : 0.0;
-  }
-
+  /** X toggles V3 aiming; no dashboard arm or full-field pose is required. */
   private String getHubRotationBlocker() {
     if (!DriverStation.isTeleopEnabled()) return "TELEOP NOT ENABLED";
-    if (!m_v3TrialArmEntry.getBoolean(false)) return "ARM V3 TEST FIRST";
     if (!m_visionAlignEnabled) return "PRESS X TO AIM";
     if (!m_robotDrive.isGyroReady()) return "NAVX NOT READY";
-    if (!m_hubTrackerV3.hasLiveTag(Timer.getFPGATimestamp()))
-      return "NO FRESH HUB TAG: TURN STOPPED";
-    return "V3 LOW-SPEED TRACKING";
+    if (!m_hubTrackerV3.hasLock(Timer.getFPGATimestamp()))
+      return "NO VALID HUB TARGET";
+    return "V3 TRACKING HUB CENTER";
   }
 
   private double getDriveRotationCommand() {
-    m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     if (!m_visionAlignEnabled) {
       m_lastHubTurnOutput = 0.0;
       return getTriggerRotation();
     }
-    if (!isV3TrialActive() || !m_robotDrive.isGyroReady()
-        || !m_hubTrackerV3.hasLiveTag(Timer.getFPGATimestamp())) {
+    Optional<Translation2d> hub = m_hubTrackerV3.getHubInOdometry(
+        Timer.getFPGATimestamp());
+    if (!m_robotDrive.isGyroReady() || hub.isEmpty()) {
       m_hubCenterAlign.stop();
       m_lastHubTurnOutput = 0.0;
       return 0.0;
     }
-    Optional<Translation2d> hub = m_hubTrackerV3.getHubInOdometry(
-        Timer.getFPGATimestamp());
-    if (hub.isEmpty()) {
-      m_lastHubTurnOutput = 0.0;
-      return 0.0;
-    }
-    m_lastHubTurnOutput = capV3TrialTurn(m_hubCenterAlign.calculateDirectTurn(
+    m_lastHubTurnOutput = m_hubCenterAlign.calculateDirectTurn(
         m_robotDrive.getPose(), m_robotDrive.getRobotRelativeSpeeds(),
-        hub.orElseThrow(), m_robotDrive.isGyroReady()));
+        hub.orElseThrow(), true);
     return m_lastHubTurnOutput;
   }
 
@@ -1072,13 +1044,9 @@ public class RobotContainer {
     m_fieldRelativeEnabled = !m_fieldRelativeEnabled;
   }
 
-  /** Toggle PhotonVision AprilTag auto-alignment on/off. */
+  /** X starts/stops HUB-center tracking directly in Teleop. */
   private void toggleVisionAlign() {
-    if (!DriverStation.isTeleopEnabled() || !m_v3TrialArmEntry.getBoolean(false)) {
-      m_visionAlignEnabled = false;
-      m_hubCenterAlign.stop();
-      return;
-    }
+    if (!DriverStation.isTeleopEnabled()) return;
     m_visionAlignEnabled = !m_visionAlignEnabled;
     if (m_visionAlignEnabled) {
       m_hubCenterAlign.start();
@@ -1218,7 +1186,7 @@ public class RobotContainer {
    * certifying the camera, without changing any motor output/interlock.
    */
   private void updateHubAimPreview() {
-    if (isV3TrialActive()) return;
+    if (DriverStation.isTeleopEnabled() && m_visionAlignEnabled) return;
     if (!m_robotDrive.isGyroReady()) {
       m_hubCenterAlign.stop();
       return;
@@ -1287,10 +1255,6 @@ public class RobotContainer {
   /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
   public void updateDashboard() {
     if (!DriverStation.isTeleopEnabled()) {
-      m_v3TrialArmEntry.setBoolean(false);
-      m_visionAlignEnabled = false;
-      m_lastHubTurnOutput = 0.0;
-    } else if (!m_v3TrialArmEntry.getBoolean(false) && m_visionAlignEnabled) {
       m_visionAlignEnabled = false;
       m_lastHubTurnOutput = 0.0;
     }

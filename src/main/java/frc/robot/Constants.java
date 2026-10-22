@@ -244,11 +244,6 @@ public final class Constants {
     public static final double DISTANCE_FILTER_ALPHA = 0.35;
   }
 
-  /** Broken swerve module: HUB automatic chassis rotation is locked in code. */
-  public static final class HubAimSafety {
-    public static final boolean ENABLE_AUTO_ROTATION = false;
-  }
-
   public static final class HoodConstants {
     public static final int HOOD_MOTOR_ID = 13;
     public static final int HOOD_ENCODER_DIO = 0;

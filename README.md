@@ -8,7 +8,7 @@ Active development branch: `hub-pose-fusion-2026`. Java/WPILib 2026 command-base
 | --- | --- |
 | Left stick | Robot-relative swerve translation by default |
 | Left/right triggers | Manual chassis rotation when HUB align is off |
-| X (press) | With HUB V3 test armed in Teleop, toggle low-speed automatic HUB center rotation |
+| X (press) | Toggle V3 automatic HUB-center rotation directly during Teleop; press again to stop |
 | Y (press) | Toggle robot-relative / field-relative translation |
 | A (hold) | Feeder only, forward at Shooter > Feeder Speed (%); release stops feeder |
 | B (hold) | Shooter only, SPARK MAX Velocity PID at Shooter > Shooter RPM Setpoint; release stops shooter |
@@ -44,7 +44,7 @@ Check the actual direction, wiring and mechanical limits before enabling motion.
 
 - Teleop X toggles tracking of the **center of the alliance HUB**, not the yaw of an individual AprilTag.
 - Active V3 uses `HubAimTrackerV3` to estimate one HUB point in **local odometry coordinates** from calibrated AprilTag 3-D measurements. Chassis movement updates its bearing; the target is not moved with the robot. No global field-pose initialization or V2 fallback is needed for V3.
-- The `Hub Direct Geometry Verified` switch starts **false**; only enable after verifying camera mounting and tag geometry on the actual setup.
+- HUB V3 automatic turning does not require the older `Hub Direct Geometry Verified` switch or a global field pose.
 - PhotonVision device: `PC_Camera`; image orientation is expected to be 180° and physical upward pitch 25°. The code assumes an effective camera transform with roll 0° and pitch -25°. Verify with real data before rotation.
 - No moving-shot lead, automatic distance-to-hood calibration, or launcher-offset calibration is claimed.
 
@@ -95,7 +95,7 @@ This project was originally based on REV's MAXSwerve Java template. The original
 - New active `HubAimTrackerV3` uses the known tag mounting geometry to reconstruct the HUB center from one or more visible AprilTags, then stores it in the chassis local odometry frame at image capture time. Every drive/preview tick recomputes the robot-to-HUB bearing from updated odometry. When a tag reappears, the fixed point is corrected.
 - A missing tag can be bridged for **at most 0.80 s**; after that the target expires. Disagreeing tag fixes, target teleports, and odometry resets invalidate the target immediately.
 - The separate `HUB V3` Shuffleboard tab exposes target lock, tag freshness, local HUB X/Y, robot X/Y, bearing, distance, heading error and validation state. Heading previews are read-only even with `Hub Direct Geometry Verified` OFF.
-- **Full-speed competition auto rotation stays locked** (`HubAimSafety.ENABLE_AUTO_ROTATION=false`). To test V3 turning at low speed, first enable Teleop, switch `HUB V3 > V3 Low-Speed Test Arm` ON, then press X once; press X again, switch Arm OFF, or Disable to stop. Trial yaw is capped at 0.08 normalized (~14.4 deg/s at 100% drive scaling), and translation while aiming is capped to 20%. No live tag within 0.25 s or navX not ready means zero automatic rotation. This does not alter shooter, feeder, hood, PathPlanner or motor current limits.
+- V3 automatic turning is directly controlled by X in Teleop. Valid AprilTag HUB geometry supplies a fixed local-odometry center; the heading PID continuously turns toward it as the robot moves. The existing controller limits turning to 45 deg/s and 90 deg/s². If navX is unavailable or the V3 target expires (0.80 s after the last accepted camera fix), automatic rotation commands zero. Manual left-stick translation remains available and is not artificially slowed.
 - Old V2 and global pose code are retained for comparison and rollback; delete/consolidate them **only after V3 is successfully verified on the actual robot**.
 
 ## HUB automatic aiming V2 (2026-10-23)
@@ -103,6 +103,6 @@ This project was originally based on REV's MAXSwerve Java template. The original
 The earlier classes were `HubAimTargetV2` and `HubAimHeadingV2`. V2 target is now a reference/diagnostic only, and the generic `HubAimHeadingV2` heading PID is reused by the V3 target.
 They reconstruct the HUB center using individual AprilTag 3D SolvePnP estimates, verify the data, reject conflicting targets, and calculate wrapped heading with a profiled controller. Legacy classes remain source-only to avoid losing work.
 
-**Safety:** Full-speed automatic rotation remains disabled through `ENABLE_AUTO_ROTATION=false`. V3 low-speed testing has its own explicit Teleop dashboard arming switch. `HUB V3 > V3 Low-Speed Test Arm` defaults OFF on deploy and resets OFF whenever Disabled. Press X once to begin slow yaw toward the stored HUB center, X again to stop. If target detections go stale (more than 0.25 s), V3 returns zero automatic turn. The physical camera geometry discrepancy is not considered fixed.
+**V3 operation:** Deploy the code, select the correct Driver Station alliance, enable Teleop, and press X to toggle automatic HUB-center pointing. No separate arming switch or geometry-verification flag is needed. Press X again or Disable to stop. Short tag occlusions use the existing bounded 0.80 s odometry hold; longer loss gives zero automatic turn. The physical camera geometry residual remains a possible source of aim error, not a software activation gate.
 
 Before considering enabling rotation: fix and validate all four modules and the navX; calibrate/check PhotonVision intrinsics and camera-to-robot 3D pose; check official HUB tag layout, target heading and observed distance with the robot Disabled; inspect X-button and telemetry status. Unit tests are not a physical drivetrain test.

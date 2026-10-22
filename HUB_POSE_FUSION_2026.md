@@ -1,3 +1,29 @@
+# Active V3 HUB aiming (2026-10-23)
+
+The active HUB auto-aim has one driver control: **X in Teleop** toggles
+automatic chassis rotation to the stored HUB center. No separate dashboard
+arm, calibration approval, global field localization, or V2 fallback is
+required to operate it.
+
+The existing `HubAimTrackerV3` computes the HUB center from visible AprilTags
+with their known placement on the 2026 HUB, transforms it into the rover's
+local odometry frame at camera capture time, and corrects it when tags are
+observed. When the chassis translates or rotates, it keeps this single
+target in odometry and recomputes heading. The existing
+`HubAimHeadingV2` PID is still limited to 45 deg/s and 90 deg/s².
+
+A lost HUB estimate expires 0.80 seconds after its last valid tag fix.
+When navX is not ready or the HUB lock has expired, commanded automatic yaw
+is zero. Disable returns the driver to the non-aiming mode. Driver translation
+remains controlled by the left stick at the existing Drive Speed (%) scale,
+while shooter, feeder, hood, intake and PathPlanner are unchanged.
+
+The `HUB V3` tab is informational, not an arming interface. The previous
+V2 diagnostic / global pose code remains preserved for later cleanup.
+Robot-mounted camera geometry may still require calibration to improve
+physical shooting accuracy.
+
+---
 # REBUILT HUB center alignment — experimental branch
 
 Branch: `hub-pose-fusion-2026` based on `intake-subsystem`
