@@ -17,6 +17,7 @@ import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import java.util.Map;
+import java.util.List;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
@@ -40,6 +41,7 @@ import frc.robot.subsystems.ShooterSubsystem;
 import org.photonvision.PhotonCamera;
 import org.photonvision.PhotonPoseEstimator;
 import org.photonvision.EstimatedRobotPose;
+import org.photonvision.targeting.PhotonTrackedTarget;
 import java.util.Optional;
 
 /*
@@ -142,6 +144,14 @@ public class RobotContainer {
   private int m_rejectedVisionCount = 0;
   private String m_visionGateStatus = "WAITING FOR CAMERA";
 
+  // Independent of global field localization. This compares the camera's
+  // 3-D target Z against the OFFICIAL tag mounting height on level ground.
+  // It is not valid when an AprilTag prop is mounted at a custom height.
+  private double m_cameraTagHeightErrorMeters = Double.NaN;
+  private double m_cameraTagHeightRobotMeters = Double.NaN;
+  private int m_cameraMountCheckTagId = -1;
+  private String m_cameraMountCheckStatus = "WAITING FOR VALID SINGLE-TAG 3D";
+
   /**
    * The container for the robot. Contains subsystems, OI devices, and commands.
    */
@@ -206,6 +216,27 @@ public class RobotContainer {
         () -> m_lastPhotonPoseMultitagSolved);
     visionTab.addDouble("Pose Avg Tag Range (m)",
         () -> m_lastAverageTagRangeMeters);
+
+    // The PhotonVision 180-degree Input Orientation is a *manual UI setting*;
+    // the number here is the expected configuration, not a live PV readback.
+    visionTab.addDouble("Camera Expected PV Orientation (deg)",
+        () -> VisionConstants.EXPECTED_PHOTONVISION_IMAGE_ORIENTATION_DEG);
+    visionTab.addDouble("Camera Config Roll (deg)",
+        () -> VisionConstants.CAMERA_ROLL_DEG);
+    visionTab.addDouble("Camera Config Pitch (deg)",
+        () -> VisionConstants.CAMERA_PITCH_DEG);
+    visionTab.addDouble("Camera Config Yaw (deg)",
+        () -> VisionConstants.CAMERA_YAW_DEG);
+    visionTab.addDouble("Camera Mount Tag ID",
+        () -> m_cameraMountCheckTagId);
+    visionTab.addDouble("Camera Mount Tag Z (m)",
+        () -> Double.isFinite(m_cameraTagHeightRobotMeters)
+            ? m_cameraTagHeightRobotMeters : -999.0);
+    visionTab.addDouble("Camera Mount Tag Height Error (m)",
+        () -> Double.isFinite(m_cameraTagHeightErrorMeters)
+            ? m_cameraTagHeightErrorMeters : -999.0);
+    visionTab.addString("Camera Mount Check Status",
+        () -> m_cameraMountCheckStatus);
     visionTab.addDouble("Vision/Fused Delta XY (m)",
         () -> m_lastVisionInnovationMeters);
     visionTab.addDouble("Tag ID", () -> m_lastTagId);
@@ -534,6 +565,60 @@ public class RobotContainer {
   }
 
   /**
+   * Camera extrinsics plausibility check for a robot standing level on the
+   * official REBUILT playing field. A physical tag placed at a different
+   * height makes this test invalid, NOT proof of bad calibration.
+   *
+   * Uses a real independent individual-tag SolvePnP estimate; requires
+   * "Always Do Single-Target Estimation" in PhotonVision for MultiTag mode.
+   */
+  private void updateCameraMountCheck(List<PhotonTrackedTarget> targets) {
+    PhotonTrackedTarget selected = null;
+    double smallestAmbiguity = Double.POSITIVE_INFINITY;
+    for (PhotonTrackedTarget target : targets) {
+      if (VisionConstants.FIELD_LAYOUT.getTagPose(
+          target.getFiducialId()).isEmpty()) continue;
+      if (target.getBestCameraToTarget() == null) continue;
+      double range = target.getBestCameraToTarget()
+          .getTranslation().getNorm();
+      double ambiguity = target.getPoseAmbiguity();
+      if (!Double.isFinite(range) || range < 0.15 || range > 5.5
+          || !Double.isFinite(ambiguity)
+          || ambiguity < 0.0 || ambiguity > 0.30) continue;
+      if (ambiguity < smallestAmbiguity) {
+        smallestAmbiguity = ambiguity;
+        selected = target;
+      }
+    }
+    if (selected == null) {
+      m_cameraMountCheckTagId = -1;
+      m_cameraTagHeightErrorMeters = Double.NaN;
+      m_cameraTagHeightRobotMeters = Double.NaN;
+      m_cameraMountCheckStatus = "NO VALID PER-TAG 3D; CHECK PHOTONVISION 3D OUTPUT";
+      return;
+    }
+
+    Pose3d observedTagInRobot = new Pose3d()
+        .transformBy(VisionConstants.ROBOT_TO_CAMERA)
+        .transformBy(selected.getBestCameraToTarget());
+    double expectedTagHeightMeters = VisionConstants.FIELD_LAYOUT
+        .getTagPose(selected.getFiducialId()).orElseThrow().getZ();
+    m_cameraMountCheckTagId = selected.getFiducialId();
+    m_cameraTagHeightRobotMeters = observedTagInRobot.getZ();
+    m_cameraTagHeightErrorMeters =
+        observedTagInRobot.getZ() - expectedTagHeightMeters;
+    if (!Double.isFinite(m_cameraTagHeightErrorMeters)) {
+      m_cameraMountCheckStatus = "INVALID 3D MOUNT MEASUREMENT";
+    } else if (Math.abs(m_cameraTagHeightErrorMeters) <= 0.12) {
+      m_cameraMountCheckStatus =
+          "TAG HEIGHT CLOSE: VERIFY X/Y, YAW AND CAMERA ROLL TOO";
+    } else {
+      m_cameraMountCheckStatus =
+          "TAG HEIGHT DIFFERS: CHECK PITCH/ROLL/HEIGHT OR PRACTICE TAG";
+    }
+  }
+
+  /**
    * PhotonVision is a MEASUREMENT SOURCE, not the heading controller.
    * Every accepted pose enters WPILib's timestamped SwerveDrivePoseEstimator
    * (FRC 5024 / 6328 pattern). All visible field tags can contribute.
@@ -542,6 +627,7 @@ public class RobotContainer {
   private void updateVisionTarget() {
     double now = Timer.getFPGATimestamp();
     for (var result : m_photonCamera.getAllUnreadResults()) {
+      updateCameraMountCheck(result.getTargets());
       // Process all visible HUB tags for LOCAL relative aiming first,
       // regardless of success/failure in the separate global pose solver.
       // Rewind odometry to the image timestamp before transforming HUB XY.
