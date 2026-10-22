@@ -11,6 +11,7 @@ import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Pose3d;
+import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.networktables.GenericEntry;
 import edu.wpi.first.wpilibj.shuffleboard.BuiltInWidgets;
@@ -18,6 +19,7 @@ import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import java.util.Map;
 import java.util.List;
+import java.util.OptionalDouble;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.XboxController;
 import edu.wpi.first.wpilibj.smartdashboard.SendableChooser;
@@ -30,6 +32,7 @@ import edu.wpi.first.wpilibj2.command.button.Trigger;
 import frc.robot.Constants.VisionConstants;
 import frc.robot.Constants.FeederConstants;
 import frc.robot.Constants.HoodConstants;
+import frc.robot.HoodDistanceCalculator.Point;
 import frc.robot.Constants.OIConstants;
 import frc.robot.Constants.ShooterConstants;
 import frc.robot.subsystems.DriveSubsystem;
@@ -105,6 +108,15 @@ public class RobotContainer {
   private final GenericEntry m_fieldVerifiedEntry;
   private final GenericEntry m_directHubGeometryEntry;
   private final GenericEntry m_hubAimTrimEntry;
+  // Preview-only distance-to-hood calibration; these do not command motors.
+  private final GenericEntry m_hoodNearDistanceEntry;
+  private final GenericEntry m_hoodNearEncoderEntry;
+  private final GenericEntry m_hoodFarDistanceEntry;
+  private final GenericEntry m_hoodFarEncoderEntry;
+  private double m_hoodPreviewDistanceMeters = Double.NaN;
+  private double m_hoodPreviewEncoderTarget = Double.NaN;
+  private String m_hoodPreviewSource = "NONE";
+  private String m_hoodPreviewStatus = "NO VERIFIED HUB DISTANCE";
   private double m_lastTagId = -1.0;
   private String m_poseSolver = "None";
   private String m_visionResetStatus = "Not requested";
@@ -215,6 +227,28 @@ public class RobotContainer {
     shotTab.addString("Autonomous Shooter Status", () -> m_autoShooterStatus);
     shotTab.addString("Last Auto Shot Result", () -> m_autoLastShotResult);
     shotTab.addBoolean("Auto Robot Stopped", this::isAutonomousDriveStoppedNow);
+
+    // Calibrate the raw DUTY CYCLE encoder at two measured distances.
+    // Values start at zero to prevent a fabricated calibration. This stage
+    // previews an interpolated target only; it never moves the hood.
+    ShuffleboardTab hoodCal = Shuffleboard.getTab("Hood Calibration");
+    m_hoodNearDistanceEntry = hoodCal.add("Near Distance (m)", 0.0)
+        .withPosition(0, 0).withSize(2, 1).getEntry();
+    m_hoodNearEncoderEntry = hoodCal.add("Near Hood Encoder", 0.0)
+        .withPosition(2, 0).withSize(2, 1).getEntry();
+    m_hoodFarDistanceEntry = hoodCal.add("Far Distance (m)", 0.0)
+        .withPosition(0, 1).withSize(2, 1).getEntry();
+    m_hoodFarEncoderEntry = hoodCal.add("Far Hood Encoder", 0.0)
+        .withPosition(2, 1).withSize(2, 1).getEntry();
+    hoodCal.addDouble("HUB Distance (m)", () ->
+        Double.isFinite(m_hoodPreviewDistanceMeters) ? m_hoodPreviewDistanceMeters : -1.0)
+        .withPosition(0, 2);
+    hoodCal.addString("Distance Source", () -> m_hoodPreviewSource).withPosition(2, 2);
+    hoodCal.addDouble("Preview Hood Encoder", () ->
+        Double.isFinite(m_hoodPreviewEncoderTarget) ? m_hoodPreviewEncoderTarget : -1.0)
+        .withPosition(0, 3);
+    hoodCal.addString("Preview Status", () -> m_hoodPreviewStatus)
+        .withPosition(2, 3).withSize(4, 1);
 
     // FRC 5024: validate distance/count and supply range-aware covariance.
     // FRC 6328: maintain one sensor-fused pose, with camera capture times.
@@ -1024,11 +1058,72 @@ public class RobotContainer {
         }, m_robotDrive));
   }
 
+  /**
+   * Read-only hood aim preview. Direct HUB-tag geometry takes priority if it
+   * was physically verified and the observation remains fresh. A verified
+   * field pose with recent accepted vision is a fallback. Stale/unverified
+   * sources, invalid calibration points and distances outside the measured
+   * range never produce a target, nor do they drive the hood.
+   */
+  private void updateHoodDistancePreview() {
+    m_hoodPreviewDistanceMeters = Double.NaN;
+    m_hoodPreviewEncoderTarget = Double.NaN;
+    m_hoodPreviewSource = "NONE";
+    m_hoodPreviewStatus = "NO VERIFIED FRESH HUB POSITION";
+
+    if (!m_robotDrive.isGyroReady()) {
+      m_hoodPreviewStatus = "NAVX NOT READY";
+      return;
+    }
+
+    OptionalDouble distance = OptionalDouble.empty();
+    double now = Timer.getFPGATimestamp();
+    if (m_directHubGeometryEntry.getBoolean(false)
+        && m_hubRelativeTarget.isFresh(now)) {
+      Optional<Translation2d> hub = m_hubRelativeTarget.getHubInOdometryFrame(now);
+      if (hub.isPresent()) {
+        distance = HubDistanceCalculator.calculateFromLocalHub(
+            m_robotDrive.getPose(), hub.get());
+        if (distance.isPresent()) m_hoodPreviewSource = "FRESH DIRECT HUB TAG";
+      }
+    }
+    if (distance.isEmpty()
+        && m_fieldVerifiedEntry.getBoolean(false)
+        && m_robotDrive.isFieldPoseInitialized()
+        && m_robotDrive.hasRecentVision(1.0)) {
+      distance = HubDistanceCalculator.calculate(
+          m_robotDrive.getPose(), DriverStation.getAlliance());
+      if (distance.isPresent()) m_hoodPreviewSource = "VERIFIED FIELD POSE";
+    }
+    if (distance.isEmpty()) return;
+    m_hoodPreviewDistanceMeters = distance.getAsDouble();
+
+    Point near = new Point(
+        m_hoodNearDistanceEntry.getDouble(0.0), m_hoodNearEncoderEntry.getDouble(0.0));
+    Point far = new Point(
+        m_hoodFarDistanceEntry.getDouble(0.0), m_hoodFarEncoderEntry.getDouble(0.0));
+    if (!HoodDistanceCalculator.areValidPair(near, far)) {
+      m_hoodPreviewStatus = "ENTER TWO MEASURED DISTANCE/ENCODER POINTS";
+      return;
+    }
+    OptionalDouble target = HoodDistanceCalculator.interpolate(
+        m_hoodPreviewDistanceMeters, near, far);
+    if (target.isEmpty()) {
+      m_hoodPreviewStatus = "DISTANCE OUTSIDE CALIBRATED RANGE";
+      return;
+    }
+    m_hoodPreviewEncoderTarget = target.getAsDouble();
+    m_hoodPreviewStatus = m_hood.isHoodReady()
+        ? "PREVIEW ONLY - NO AUTOMATIC HOOD MOTION"
+        : "PREVIEW ONLY - HOOD SENSOR/LIMITS NOT READY";
+  }
+
   /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
   public void updateDashboard() {
     // Keep trim preview and its settling reset current even while disabled.
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     updateVisionTarget();
+    updateHoodDistancePreview();
   }
 
   private double getVisionPoseAgeSeconds() {
