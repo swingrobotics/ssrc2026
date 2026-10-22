@@ -109,8 +109,12 @@ class HubAimV2Test {
     assertEquals("NO VALID INDIVIDUAL 3D HUB TAG", tracker.getStatus());
     assertTrue(tracker.getTag25Diagnostics().contains("INVALID_AMBIGUITY"));
     assertTrue(tracker.getTag25Diagnostics().contains("ambiguity=-1.00000"));
+    assertEquals("INVALID_AMBIGUITY", tracker.getTagDebugGate(25));
+    assertEquals(-1.0, tracker.getTagDebugAmbiguity(25), 1e-6);
+    assertTrue(Double.isFinite(tracker.getTagDebugRangeMeters(25)));
     assertEquals(0, tracker.getValidCandidateCount());
     assertTrue(tracker.getTag26Diagnostics().contains("NOT_SEEN_THIS_FRAME"));
+    assertEquals("NOT SEEN", tracker.getTagDebugGate(26));
     assertEquals("NO VALID INDIVIDUAL 3D HUB TAG", tracker.getLastRejectionReason());
   }
 
@@ -124,10 +128,16 @@ class HubAimV2Test {
     tracker.observe(List.of(missing), Optional.of(Alliance.Blue),
         Pose2d.kZero, 20.0, 20.05);
     assertTrue(tracker.getTag26Diagnostics().contains("INVALID_TRANSFORM"));
+    assertEquals("INVALID_TRANSFORM", tracker.getTagDebugGate(26));
+    assertEquals(0.0, tracker.getTagDebugRangeMeters(26), 1e-6);
     assertEquals(0, tracker.getValidCandidateCount());
     tracker.observe(List.of(tag(25, robot)), Optional.of(Alliance.Blue),
         Pose2d.kZero, 20.10, 20.15);
     assertTrue(tracker.getTag25Diagnostics().contains("=> ACCEPTED"));
+    assertEquals("ACCEPTED", tracker.getTagDebugGate(25));
+    assertTrue(Double.isFinite(tracker.getTagDebugX(25)));
+    assertTrue(Double.isFinite(tracker.getTagDebugY(25)));
+    assertTrue(Double.isFinite(tracker.getTagDebugZ(25)));
     assertEquals(1, tracker.getValidCandidateCount());
     assertTrue(tracker.isFresh(20.16));
   }
@@ -139,9 +149,11 @@ class HubAimV2Test {
     tracker.observe(List.of(tag(25, robot)), Optional.of(Alliance.Red),
         Pose2d.kZero, 30.0, 30.05);
     assertTrue(tracker.getTag25Diagnostics().contains("ALLIANCE_MISMATCH"));
+    assertEquals("ALLIANCE_MISMATCH", tracker.getTagDebugGate(25));
     tracker.observe(List.of(tag(26, robot)), Optional.of(Alliance.Blue),
         Pose2d.kZero, 30.10, 30.90);
     assertTrue(tracker.getTag26Diagnostics().contains("STALE_FRAME"));
+    assertEquals("STALE_FRAME", tracker.getTagDebugGate(26));
   }
 
   @Test

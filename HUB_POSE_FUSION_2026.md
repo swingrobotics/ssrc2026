@@ -191,6 +191,22 @@ These are essential interlocks, not optional tuning steps:
     A trim is NOT a repair for wrong camera calibration/field geometry.
     Record validated trim and measure launcher yaw mechanically.
 
+## Compact V2 HUB tag diagnostics (easy to read)
+
+Open the separate `HUB Tag Debug` Shuffleboard tab. Its `Tag 25 Reason` and
+`Tag 26 Reason` widgets show a short gate result **first**, with raw
+`Ambiguity`, `Range (m)`, and individual camera-to-tag X/Y/Z (m) in
+separate number widgets. `HUB Valid Candidates` counts accepted per-tag
+measurements before multi-tag consistency checking. `HUB Last Rejection`
+shows the last overall failed measurement reason. The two full raw diagnostic
+strings were moved out of the crowded `Vision Diagnostics` tab and into this
+new tab, under `Tag 25 Full Details` and `Tag 26 Full Details`. If a tag
+is not detected, its compact gate is `NOT SEEN` and numeric fields are NaN.
+
+The compact gate is a display-only summary of the same existing decisions;
+no ambiguity/geometry filtering, velocity control, or automatic rotation
+interlocks were changed.
+
 ## Live V2 direct HUB tag diagnostics
 
 In `Vision Diagnostics`, `HUB Tag 25 Diagnostics` and `HUB Tag 26 Diagnostics`

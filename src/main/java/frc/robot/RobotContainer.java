@@ -341,16 +341,61 @@ public class RobotContainer {
             : "PREVIEW ONLY - REPAIR SWERVE WHEEL FIRST");
     visionTab.addString("HUB Aim Source", m_hubCenterAlign::getSource);
     visionDebugTab.addString("HUB Direct Status", m_hubRelativeTarget::getStatus);
-    // Per-tag gate results and raw 3D values. These are telemetry only;
-    // they never override a rejected measurement or enable auto rotation.
-    visionDebugTab.addString("HUB Tag 25 Diagnostics",
-        m_hubRelativeTarget::getTag25Diagnostics);
-    visionDebugTab.addString("HUB Tag 26 Diagnostics",
-        m_hubRelativeTarget::getTag26Diagnostics);
-    visionDebugTab.addString("HUB Direct Last Rejection",
-        m_hubRelativeTarget::getLastRejectionReason);
-    visionDebugTab.addDouble("HUB Valid Candidate Count",
-        m_hubRelativeTarget::getValidCandidateCount);
+    // Keep the already-crowded Vision Diagnostics tab readable. Use a new
+    // dedicated tab to show per-tag rejection gates in SHORT strings and
+    // numeric 3D telemetry. No impact on HUB decisions or robot outputs.
+    ShuffleboardTab hubTagDebugTab = Shuffleboard.getTab("HUB Tag Debug");
+    hubTagDebugTab.addString("Tag 25 Reason",
+        () -> m_hubRelativeTarget.getTagDebugGate(25))
+        .withPosition(0, 0).withSize(4, 1);
+    hubTagDebugTab.addDouble("Tag 25 Ambiguity",
+        () -> m_hubRelativeTarget.getTagDebugAmbiguity(25))
+        .withPosition(4, 0).withSize(2, 1);
+    hubTagDebugTab.addDouble("Tag 25 Range (m)",
+        () -> m_hubRelativeTarget.getTagDebugRangeMeters(25))
+        .withPosition(6, 0).withSize(2, 1);
+
+    hubTagDebugTab.addString("Tag 26 Reason",
+        () -> m_hubRelativeTarget.getTagDebugGate(26))
+        .withPosition(0, 1).withSize(4, 1);
+    hubTagDebugTab.addDouble("Tag 26 Ambiguity",
+        () -> m_hubRelativeTarget.getTagDebugAmbiguity(26))
+        .withPosition(4, 1).withSize(2, 1);
+    hubTagDebugTab.addDouble("Tag 26 Range (m)",
+        () -> m_hubRelativeTarget.getTagDebugRangeMeters(26))
+        .withPosition(6, 1).withSize(2, 1);
+
+    hubTagDebugTab.addDouble("Tag 25 X (m)",
+        () -> m_hubRelativeTarget.getTagDebugX(25))
+        .withPosition(0, 2).withSize(2, 1);
+    hubTagDebugTab.addDouble("Tag 25 Y (m)",
+        () -> m_hubRelativeTarget.getTagDebugY(25))
+        .withPosition(2, 2).withSize(2, 1);
+    hubTagDebugTab.addDouble("Tag 25 Z (m)",
+        () -> m_hubRelativeTarget.getTagDebugZ(25))
+        .withPosition(4, 2).withSize(2, 1);
+    hubTagDebugTab.addDouble("Tag 26 X (m)",
+        () -> m_hubRelativeTarget.getTagDebugX(26))
+        .withPosition(0, 3).withSize(2, 1);
+    hubTagDebugTab.addDouble("Tag 26 Y (m)",
+        () -> m_hubRelativeTarget.getTagDebugY(26))
+        .withPosition(2, 3).withSize(2, 1);
+    hubTagDebugTab.addDouble("Tag 26 Z (m)",
+        () -> m_hubRelativeTarget.getTagDebugZ(26))
+        .withPosition(4, 3).withSize(2, 1);
+    hubTagDebugTab.addString("HUB Last Rejection",
+        m_hubRelativeTarget::getLastRejectionReason)
+        .withPosition(0, 4).withSize(6, 1);
+    hubTagDebugTab.addDouble("HUB Valid Candidates",
+        m_hubRelativeTarget::getValidCandidateCount)
+        .withPosition(6, 4).withSize(2, 1);
+    // Retain detailed raw strings in this uncrowded tab as secondary telemetry.
+    hubTagDebugTab.addString("Tag 25 Full Details",
+        m_hubRelativeTarget::getTag25Diagnostics)
+        .withPosition(0, 5).withSize(8, 1);
+    hubTagDebugTab.addString("Tag 26 Full Details",
+        m_hubRelativeTarget::getTag26Diagnostics)
+        .withPosition(0, 6).withSize(8, 1);
     visionTab.addBoolean("HUB Direct Fresh",
         () -> m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp()));
     visionDebugTab.addDouble("HUB Direct Tag Count",

@@ -43,6 +43,16 @@ public final class HubAimTargetV2 {
   // Only diagnostics: these values never authorize rotation or bypass filtering.
   private String tag25Diagnostics = "NO FRAME YET";
   private String tag26Diagnostics = "NO FRAME YET";
+  // Compact live telemetry for Shuffleboard: gate separate from raw values.
+  private record TagDebug(String gate, double ambiguity,
+                          double x, double y, double z, double range) {
+    static TagDebug unseen() {
+      return new TagDebug("NOT SEEN", Double.NaN,
+          Double.NaN, Double.NaN, Double.NaN, Double.NaN);
+    }
+  }
+  private TagDebug tag25Debug = TagDebug.unseen();
+  private TagDebug tag26Debug = TagDebug.unseen();
   private String lastRejectionReason = "NONE";
   private int validCandidateCount = 0;
 
@@ -108,6 +118,14 @@ public final class HubAimTargetV2 {
     double y = xyz == null ? Double.NaN : xyz.getY();
     double z = xyz == null ? Double.NaN : xyz.getZ();
     double range = xyz == null ? Double.NaN : xyz.getNorm();
+    String shortGate = gate;
+    int detailsStart = gate.indexOf(" (");
+    if (detailsStart >= 0) shortGate = gate.substring(0, detailsStart);
+    if (shortGate.startsWith("STALE_FRAME")) shortGate = "STALE_FRAME";
+    TagDebug debug = new TagDebug(shortGate, target.getPoseAmbiguity(),
+        x, y, z, range);
+    if (id == 25) tag25Debug = debug;
+    else tag26Debug = debug;
     String alliance = allianceForTag(id).map(Enum::name).orElse("UNKNOWN");
     String info = String.format(Locale.US,
         "ID=%d alliance=%s ambiguity=%.5f xyz=(%.3f, %.3f, %.3f)m range=%.3fm => %s",
@@ -131,6 +149,8 @@ public final class HubAimTargetV2 {
     validCandidateCount = 0;
     tag25Diagnostics = "NOT_SEEN_THIS_FRAME";
     tag26Diagnostics = "NOT_SEEN_THIS_FRAME";
+    tag25Debug = TagDebug.unseen();
+    tag26Debug = TagDebug.unseen();
     if (targets == null || targets.isEmpty()) {
       status = "NO HUB TAGS";
       return;
@@ -277,11 +297,22 @@ public final class HubAimTargetV2 {
     validCandidateCount = 0;
     tag25Diagnostics = "NO FRAME YET";
     tag26Diagnostics = "NO FRAME YET";
+    tag25Debug = TagDebug.unseen();
+    tag26Debug = TagDebug.unseen();
     lastRejectionReason = "NONE";
     status = "WAITING FOR HUB TAG";
   }
   public String getTag25Diagnostics() { return tag25Diagnostics; }
   public String getTag26Diagnostics() { return tag26Diagnostics; }
+  private TagDebug tagDebug(int id) {
+    return id == 25 ? tag25Debug : id == 26 ? tag26Debug : TagDebug.unseen();
+  }
+  public String getTagDebugGate(int id) { return tagDebug(id).gate(); }
+  public double getTagDebugAmbiguity(int id) { return tagDebug(id).ambiguity(); }
+  public double getTagDebugRangeMeters(int id) { return tagDebug(id).range(); }
+  public double getTagDebugX(int id) { return tagDebug(id).x(); }
+  public double getTagDebugY(int id) { return tagDebug(id).y(); }
+  public double getTagDebugZ(int id) { return tagDebug(id).z(); }
   public String getLastRejectionReason() { return lastRejectionReason; }
   public int getValidCandidateCount() { return validCandidateCount; }
   public String getStatus() { return status; }
