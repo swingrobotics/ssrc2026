@@ -119,13 +119,12 @@ public final class Constants {
   /**
    * Two Spark MAX / original NEO intake rollers.
    *
-   * Assign TWO unique CAN IDs before enabling. -1 deliberately prevents motor
-   * initialization, so an unfinished configuration cannot claim another device.
+   * CAN IDs 16 (left) and 17 (right) restored from shooter-integration.
+   * Verify these are still the physical controller IDs before enabling.
    */
   public static final class IntakeConstants {
-    public static final int UNASSIGNED_CAN_ID = -1;
-    public static final int LEFT_CAN_ID = UNASSIGNED_CAN_ID;
-    public static final int RIGHT_CAN_ID = UNASSIGNED_CAN_ID;
+    public static final int LEFT_CAN_ID = 16;
+    public static final int RIGHT_CAN_ID = 17;
 
     // Conservative first-power-on limits; tune only after confirming roller direction.
     public static final int CURRENT_LIMIT_AMPS = 20;
