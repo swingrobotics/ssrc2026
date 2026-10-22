@@ -21,9 +21,12 @@ class ShooterFeedControllerTest {
   }
 
   @Test
-  void stopsWhenShooterNotRequestedOrUncalibrated() {
+  void reverseOnlyWhenTargetUncalibratedAndStopForInvalidReadings() {
     assertEquals(STOP, ShooterFeedController.select(false, 3000, 3000, 150, true));
-    assertEquals(STOP, ShooterFeedController.select(true, 0, 0, 150, false));
+    assertEquals(REVERSE, ShooterFeedController.select(true, 0, 0, 150, false));
+    assertEquals(REVERSE, ShooterFeedController.select(true, 500, 0, 150, true));
+    assertEquals(STOP, ShooterFeedController.select(true, 500, -1, 150, false));
+    assertEquals(STOP, ShooterFeedController.select(true, 500, Double.NaN, 150, false));
     assertEquals(STOP, ShooterFeedController.select(true, 500, 200, 150, false));
     assertEquals(STOP, ShooterFeedController.select(true, Double.NaN, 3000, 150, false));
     assertEquals(STOP, ShooterFeedController.select(true, -100, 3000, 150, false));
