@@ -73,7 +73,7 @@ public class RobotContainer {
   // stability of real rotation before accepting feeder commands.
   private final FeederSubsystem m_feeder = new FeederSubsystem(m_shooter::isReadyToFeed);
   private final HoodSubsystem m_hood = new HoodSubsystem();
-  // Intake roller controllers stay disabled until both roller CAN IDs are assigned.
+  // Intake roller controllers use CAN 16/17; confirm physical IDs before operation.
   private final IntakeSubsystem m_intake = new IntakeSubsystem();
   // Intake arm is currently configured as CAN 15; verify hardware and limits.
   private final IntakeArmSubsystem m_intakeArm = new IntakeArmSubsystem();
@@ -161,17 +161,18 @@ public class RobotContainer {
     m_driveSpeedEntry = driveTab.add("Drive Speed (%)", kDefaultDrivePercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
-    m_shooterSpeedEntry = driveTab.add("Shooter Output (%)", kDefaultShooterPercent)
+    driveTab.addBoolean("Field Relative", () -> m_fieldRelativeEnabled);
+    driveTab.addBoolean("Hub Center Align", () -> m_visionAlignEnabled);
+
+    // Motor duty-cycle controls belong with mechanism telemetry, not driving.
+    ShuffleboardTab shooterTab = Shuffleboard.getTab("Shooter");
+    m_shooterSpeedEntry = shooterTab.add("Shooter Output (%)", kDefaultShooterPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0,
             "max", ShooterConstants.MAX_MOTOR_OUTPUT * 100.0)).getEntry();
-    // All operator speed settings use motor duty-cycle PERCENT only.
-    driveTab.addBoolean("Feeder Active", m_feeder::isFeeding);
-    m_feederSpeedEntry = driveTab.add("Feeder Speed (%)", kDefaultFeederPercent)
+    m_feederSpeedEntry = shooterTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
-    driveTab.addBoolean("Field Relative", () -> m_fieldRelativeEnabled);
-    driveTab.addBoolean("Hub Center Align", () -> m_visionAlignEnabled);
 
     // No RPM setpoints or unmeasured hood calibration parameters.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
@@ -187,6 +188,7 @@ public class RobotContainer {
     // FRC 5024: validate distance/count and supply range-aware covariance.
     // FRC 6328: maintain one sensor-fused pose, with camera capture times.
     ShuffleboardTab visionTab = Shuffleboard.getTab("Vision");
+    ShuffleboardTab visionDebugTab = Shuffleboard.getTab("Vision Diagnostics");
     m_fieldVerifiedEntry = visionTab.add("Field Camera Verified", false).getEntry();
     // Independent from the global field-pose check: practice HUBs can be
     // aimed at without defining the robot's field X/Y origin.
@@ -198,38 +200,34 @@ public class RobotContainer {
     visionTab.addBoolean("NavX Ready", m_robotDrive::isGyroReady);
     visionTab.addBoolean("Fused Vision Fresh",
         () -> m_robotDrive.hasRecentVision(1.0));
-    visionTab.addDouble("Fused Pose X (m)", () -> m_robotDrive.getPose().getX());
-    visionTab.addDouble("Fused Pose Y (m)", () -> m_robotDrive.getPose().getY());
-    visionTab.addDouble("Fused Heading (deg)",
-        () -> m_robotDrive.getPose().getRotation().getDegrees());
     visionTab.addString("Pose Init Status", () -> m_visionResetStatus);
     visionTab.addString("Vision Gate Status", () -> m_visionGateStatus);
-    visionTab.addDouble("Vision Accepted Frames", () -> m_acceptedVisionCount);
-    visionTab.addDouble("Vision Rejected Frames", () -> m_rejectedVisionCount);
-    visionTab.addDouble("Visible Tags Used", () -> m_lastVisionUsedTagCount);
+    visionDebugTab.addDouble("Vision Accepted Frames", () -> m_acceptedVisionCount);
+    visionDebugTab.addDouble("Vision Rejected Frames", () -> m_rejectedVisionCount);
+    visionDebugTab.addDouble("Visible Tags Used", () -> m_lastVisionUsedTagCount);
     // Raw PhotonPipelineResult vs. the result of the robot-side solver.
     // Two detected tags do not guarantee that coprocessor PnP produced a pose.
-    visionTab.addDouble("Raw Detected Tag Count", () -> m_lastDetectedTagCount);
-    visionTab.addBoolean("Raw Coproc MultiTag Present",
+    visionDebugTab.addDouble("Raw Detected Tag Count", () -> m_lastDetectedTagCount);
+    visionDebugTab.addBoolean("Raw Coproc MultiTag Present",
         () -> m_lastCoprocMultitagResultPresent);
-    visionTab.addBoolean("PhotonPose MultiTag Solved",
+    visionDebugTab.addBoolean("PhotonPose MultiTag Solved",
         () -> m_lastPhotonPoseMultitagSolved);
-    visionTab.addDouble("Pose Avg Tag Range (m)",
+    visionDebugTab.addDouble("Pose Avg Tag Range (m)",
         () -> m_lastAverageTagRangeMeters);
 
     // The PhotonVision 180-degree Input Orientation is a *manual UI setting*;
     // the number here is the expected configuration, not a live PV readback.
-    visionTab.addDouble("Camera Expected PV Orientation (deg)",
+    visionDebugTab.addDouble("Camera Expected PV Orientation (deg)",
         () -> VisionConstants.EXPECTED_PHOTONVISION_IMAGE_ORIENTATION_DEG);
-    visionTab.addDouble("Camera Config Roll (deg)",
+    visionDebugTab.addDouble("Camera Config Roll (deg)",
         () -> VisionConstants.CAMERA_ROLL_DEG);
-    visionTab.addDouble("Camera Config Pitch (deg)",
+    visionDebugTab.addDouble("Camera Config Pitch (deg)",
         () -> VisionConstants.CAMERA_PITCH_DEG);
-    visionTab.addDouble("Camera Config Yaw (deg)",
+    visionDebugTab.addDouble("Camera Config Yaw (deg)",
         () -> VisionConstants.CAMERA_YAW_DEG);
-    visionTab.addDouble("Camera Mount Tag ID",
+    visionDebugTab.addDouble("Camera Mount Tag ID",
         () -> m_cameraMountCheckTagId);
-    visionTab.addDouble("Camera Mount Tag Z (m)",
+    visionDebugTab.addDouble("Camera Mount Tag Z (m)",
         () -> Double.isFinite(m_cameraTagHeightRobotMeters)
             ? m_cameraTagHeightRobotMeters : -999.0);
     visionTab.addDouble("Camera Mount Tag Height Error (m)",
@@ -237,18 +235,18 @@ public class RobotContainer {
             ? m_cameraTagHeightErrorMeters : -999.0);
     visionTab.addString("Camera Mount Check Status",
         () -> m_cameraMountCheckStatus);
-    visionTab.addDouble("Vision/Fused Delta XY (m)",
+    visionDebugTab.addDouble("Vision/Fused Delta XY (m)",
         () -> m_lastVisionInnovationMeters);
-    visionTab.addDouble("Tag ID", () -> m_lastTagId);
-    visionTab.addBoolean("Raw Pose Fresh", this::isVisionPoseFresh);
-    visionTab.addDouble("Raw Pose X (m)",
+    visionDebugTab.addDouble("Tag ID", () -> m_lastTagId);
+    visionDebugTab.addBoolean("Raw Pose Fresh", this::isVisionPoseFresh);
+    visionDebugTab.addDouble("Raw Pose X (m)",
         () -> m_lastRawVisionPose == null ? -1.0 : m_lastRawVisionPose.getX());
-    visionTab.addDouble("Raw Pose Y (m)",
+    visionDebugTab.addDouble("Raw Pose Y (m)",
         () -> m_lastRawVisionPose == null ? -1.0 : m_lastRawVisionPose.getY());
-    visionTab.addDouble("Raw Heading (deg)",
+    visionDebugTab.addDouble("Raw Heading (deg)",
         () -> m_lastRawVisionPose == null ? -999.0
             : m_lastRawVisionPose.getRotation().getDegrees());
-    visionTab.addString("Pose Solver", () -> m_poseSolver);
+    visionDebugTab.addString("Pose Solver", () -> m_poseSolver);
     visionTab.addString("Alliance",
         () -> DriverStation.getAlliance().map(Enum::name).orElse("UNKNOWN"));
     visionTab.addString("HUB Align Status", m_hubCenterAlign::getStatus);
@@ -260,18 +258,17 @@ public class RobotContainer {
         m_hubRelativeTarget::getLastTagCount);
     visionTab.addDouble("HUB Direct Best Tag ID",
         m_hubRelativeTarget::getLastHubTagId);
-    visionTab.addString("HUB Direct Tag Alliance",
+    visionDebugTab.addString("HUB Direct Tag Alliance",
         m_hubRelativeTarget::getTargetAlliance);
-    visionTab.addDouble("HUB Direct Age (s)",
+    visionDebugTab.addDouble("HUB Direct Age (s)",
         () -> m_hubRelativeTarget.getLastAgeSeconds(Timer.getFPGATimestamp()));
-    visionTab.addDouble("HUB Direct Rejected Frames",
+    visionDebugTab.addDouble("HUB Direct Rejected Frames",
         m_hubRelativeTarget::getRejectedFrames);
     // Diagnostic chain: driver X -> enable state -> localization gates ->
     // actual computed turn output. Unlike camera yaw, these answer
     // "why does the robot not rotate?" without bypassing safety checks.
-    visionTab.addBoolean("HUB X Button Pressed", m_driverController::getXButton);
-    visionTab.addBoolean("HUB Align Requested", () -> m_visionAlignEnabled);
-    visionTab.addBoolean("HUB Teleop Enabled", DriverStation::isTeleopEnabled);
+    visionDebugTab.addBoolean("HUB X Button Pressed", m_driverController::getXButton);
+    visionDebugTab.addBoolean("HUB Teleop Enabled", DriverStation::isTeleopEnabled);
     visionTab.addString("HUB Turn Blocker", this::getHubRotationBlocker);
     visionTab.addDouble("HUB Turn Command (%)", () -> m_lastHubTurnOutput * 100.0);
     visionTab.addDouble("HUB Error (deg)",
@@ -281,20 +278,19 @@ public class RobotContainer {
     m_hubAimTrimEntry = visionTab.add("Hub Aim Trim (deg)", 0.0)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", -15.0, "max", 15.0)).getEntry();
-    visionTab.addDouble("Hub Trim Applied (deg)", m_hubCenterAlign::getAimTrimDegrees);
-    visionTab.addDouble("Hub Untrimmed Error (deg)",
+    visionDebugTab.addDouble("Hub Trim Applied (deg)", m_hubCenterAlign::getAimTrimDegrees);
+    visionDebugTab.addDouble("Hub Untrimmed Error (deg)",
         m_hubCenterAlign::getUntrimmedHeadingErrorDegrees);
-    visionTab.addDouble("Hub Estimated Heading (deg)",
+    visionDebugTab.addDouble("Hub Estimated Heading (deg)",
         m_hubCenterAlign::getEstimatedHeadingDegrees);
-    visionTab.addDouble("Hub Desired Heading (deg)",
+    visionDebugTab.addDouble("Hub Desired Heading (deg)",
         m_hubCenterAlign::getDesiredHeadingDegrees);
-    visionTab.addDouble("Hub Bearing (deg)", m_hubCenterAlign::getHubBearingDegrees);
-    visionTab.addDouble("Hub Distance (m)", m_hubCenterAlign::getHubDistanceMeters);
+    visionDebugTab.addDouble("Hub Bearing (deg)", m_hubCenterAlign::getHubBearingDegrees);
+    visionDebugTab.addDouble("Hub Distance (m)", m_hubCenterAlign::getHubDistanceMeters);
 
-    ShuffleboardTab debugTab = Shuffleboard.getTab("Debug");
-    debugTab.addString("Vision Field Layout", () -> "2026 REBUILT Welded");
-    debugTab.addString("Vision Camera", () -> VisionConstants.CAMERA_NAME);
-    debugTab.addDouble("Vision Pose Age (s)", this::getVisionPoseAgeSeconds);
+    visionDebugTab.addString("Vision Field Layout", () -> "2026 REBUILT Welded");
+    visionDebugTab.addString("Vision Camera", () -> VisionConstants.CAMERA_NAME);
+    visionDebugTab.addDouble("Vision Pose Age (s)", this::getVisionPoseAgeSeconds);
 
     configureButtonBindings();
     // Must register before AutoBuilder.buildAutoChooser() parses .auto files.
