@@ -98,6 +98,7 @@ public class RobotContainer {
   private final GenericEntry m_visionFusionEntry;
   private final GenericEntry m_visionResetEntry;
   private final GenericEntry m_fieldVerifiedEntry;
+  private final GenericEntry m_directHubGeometryEntry;
   private final GenericEntry m_hubAimTrimEntry;
   private double m_lastTagId = -1.0;
   private String m_poseSolver = "None";
@@ -114,8 +115,10 @@ public class RobotContainer {
   private final PhotonPoseEstimator m_photonPoseEstimator =
       new PhotonPoseEstimator(VisionConstants.FIELD_LAYOUT, VisionConstants.ROBOT_TO_CAMERA);
   private final HubCenterAlign m_hubCenterAlign = new HubCenterAlign();
-
-  // Multitag HUB center aiming uses robot field pose, not individual tag yaw.
+  // FRC 4107: local cameraToTag -> tagToHUB computation. This does not
+  // require field pose initialization; odometry only compensates latency.
+  private final HubRelativeTarget m_hubRelativeTarget =
+      new HubRelativeTarget(VisionConstants.FIELD_LAYOUT);
 
   // Driving mode. False keeps robot-relative translation by default.
   private boolean m_fieldRelativeEnabled = false;
@@ -175,6 +178,10 @@ public class RobotContainer {
     // FRC 6328: maintain one sensor-fused pose, with camera capture times.
     ShuffleboardTab visionTab = Shuffleboard.getTab("Vision");
     m_fieldVerifiedEntry = visionTab.add("Field Camera Verified", false).getEntry();
+    // Independent from the global field-pose check: practice HUBs can be
+    // aimed at without defining the robot's field X/Y origin.
+    m_directHubGeometryEntry =
+        visionTab.add("Hub Direct Geometry Verified", false).getEntry();
     m_visionFusionEntry = visionTab.add("Fusion Enabled", true).getEntry();
     m_visionResetEntry = visionTab.add("Reset Pose (Disabled)", false).getEntry();
     visionTab.addBoolean("Pose Initialized", m_robotDrive::isFieldPoseInitialized);
@@ -214,6 +221,20 @@ public class RobotContainer {
     visionTab.addString("Alliance",
         () -> DriverStation.getAlliance().map(Enum::name).orElse("UNKNOWN"));
     visionTab.addString("HUB Align Status", m_hubCenterAlign::getStatus);
+    visionTab.addString("HUB Aim Source", m_hubCenterAlign::getSource);
+    visionTab.addString("HUB Direct Status", m_hubRelativeTarget::getStatus);
+    visionTab.addBoolean("HUB Direct Fresh",
+        () -> m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp()));
+    visionTab.addDouble("HUB Direct Tag Count",
+        m_hubRelativeTarget::getLastTagCount);
+    visionTab.addDouble("HUB Direct Best Tag ID",
+        m_hubRelativeTarget::getLastHubTagId);
+    visionTab.addString("HUB Direct Tag Alliance",
+        m_hubRelativeTarget::getTargetAlliance);
+    visionTab.addDouble("HUB Direct Age (s)",
+        () -> m_hubRelativeTarget.getLastAgeSeconds(Timer.getFPGATimestamp()));
+    visionTab.addDouble("HUB Direct Rejected Frames",
+        m_hubRelativeTarget::getRejectedFrames);
     // Diagnostic chain: driver X -> enable state -> localization gates ->
     // actual computed turn output. Unlike camera yaw, these answer
     // "why does the robot not rotate?" without bypassing safety checks.
@@ -521,6 +542,15 @@ public class RobotContainer {
   private void updateVisionTarget() {
     double now = Timer.getFPGATimestamp();
     for (var result : m_photonCamera.getAllUnreadResults()) {
+      // Process all visible HUB tags for LOCAL relative aiming first,
+      // regardless of success/failure in the separate global pose solver.
+      // Rewind odometry to the image timestamp before transforming HUB XY.
+      m_hubRelativeTarget.observe(
+          result.getTargets(),
+          DriverStation.getAlliance(),
+          m_robotDrive.getPoseAtTime(result.getTimestampSeconds()).orElse(null),
+          result.getTimestampSeconds(),
+          now);
       m_lastDetectedTagCount = result.getTargets().size();
       m_lastCoprocMultitagResultPresent = result.getMultiTagResult().isPresent();
       m_lastPhotonPoseMultitagSolved = false;
@@ -656,6 +686,7 @@ public class RobotContainer {
         m_visionResetStatus = "REJECTED: NEED FRESH MULTITAG POSE";
       } else {
         m_robotDrive.resetOdometry(m_latestGoodSeedPose);
+        m_hubRelativeTarget.clear(); // global odometry frame changed
         m_visionResetStatus = "INITIALIZED FROM VERIFIED MULTITAG POSE";
         // Wait for the next validated frame before allowing auto-aim.
       }
@@ -672,28 +703,60 @@ public class RobotContainer {
   private String getHubRotationBlocker() {
     if (!DriverStation.isTeleopEnabled()) return "TELEOP NOT ENABLED";
     if (!m_visionAlignEnabled) return "X: HUB ALIGN IS OFF";
+    if (!m_robotDrive.isGyroReady()) return "NAVX NOT CONNECTED OR CALIBRATING";
+
+    boolean directFresh = m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp());
+    if (directFresh && m_directHubGeometryEntry.getBoolean(false)) {
+      return m_hubCenterAlign.isAligned() ? "DIRECT HUB: ALIGNED"
+          : "DIRECT HUB TAG 3D: " + m_hubCenterAlign.getStatus();
+    }
+
+    // The original field localization path is ONLY a secondary fallback.
+    if (m_fieldVerifiedEntry.getBoolean(false)
+        && m_robotDrive.isFieldPoseInitialized()
+        && m_robotDrive.hasRecentVision(1.0)
+        && DriverStation.getAlliance().isPresent()) {
+      return m_hubCenterAlign.isAligned() ? "FIELD FUSED: ALIGNED"
+          : "FIELD FUSED: " + m_hubCenterAlign.getStatus();
+    }
+
+    if (directFresh && !m_directHubGeometryEntry.getBoolean(false))
+      return "ENABLE HUB DIRECT GEOMETRY VERIFIED AFTER CALIBRATION";
     if (!m_fieldVerifiedEntry.getBoolean(false))
-      return "FIELD CAMERA VERIFIED IS OFF";
+      return "NO DIRECT TARGET; FIELD CAMERA VERIFIED IS OFF";
     if (!m_robotDrive.isFieldPoseInitialized())
-      return "POSE NOT INITIALIZED: RESET WHILE DISABLED";
-    if (!m_robotDrive.isGyroReady())
-      return "NAVX NOT CONNECTED OR CALIBRATING";
+      return "NO DIRECT TARGET; FIELD POSE NOT INITIALIZED";
     if (DriverStation.getAlliance().isEmpty())
-      return "ALLIANCE UNKNOWN IN DRIVER STATION";
+      return "NO DIRECT TARGET; ALLIANCE UNKNOWN";
     if (!m_robotDrive.hasRecentVision(1.0))
-      return "NO FRESH FUSED VISION IN LAST 1 SECOND";
-    if (m_hubCenterAlign.isAligned())
-      return "ALREADY ALIGNED: ROTATION CORRECTLY STOPPED";
-    return m_hubCenterAlign.getStatus();
+      return "NO DIRECT TARGET; FUSED VISION STALE";
+    return "NO VALID HUB TARGET: " + m_hubRelativeTarget.getStatus();
   }
 
-  /** FRC 135-style point-facing profiled rotation from fused field pose. */
+  /**
+   * Prefer the independently verified FRC 4107-style HUB-relative target.
+   * This path requires no global X/Y initialization and supports one tag.
+   * On missing/uncalibrated direct tag measurements, use the existing
+   * validated field-based aim when available.
+   */
   private double getDriveRotationCommand() {
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     if (!m_visionAlignEnabled) {
       m_lastHubTurnOutput = 0.0;
       return getTriggerRotation();
     }
+
+    if (m_directHubGeometryEntry.getBoolean(false)
+        && m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp())) {
+      m_lastHubTurnOutput = m_hubCenterAlign.calculateDirectTurn(
+          m_robotDrive.getPose(),
+          m_robotDrive.getRobotRelativeSpeeds(),
+          m_hubRelativeTarget.getHubInOdometryFrame(
+              Timer.getFPGATimestamp()).orElse(null),
+          m_robotDrive.isGyroReady());
+      return m_lastHubTurnOutput;
+    }
+
     m_lastHubTurnOutput = m_hubCenterAlign.calculateTurn(
         m_robotDrive.getPose(),
         m_robotDrive.getRobotRelativeSpeeds(),
@@ -780,9 +843,10 @@ public class RobotContainer {
             m_robotDrive));
 
     new JoystickButton(m_driverController, XboxController.Button.kStart.value)
-        .onTrue(new InstantCommand(
-            () -> m_robotDrive.zeroHeading(),
-            m_robotDrive));
+        .onTrue(new InstantCommand(() -> {
+          m_robotDrive.zeroHeading();
+          m_hubRelativeTarget.clear(); // odometry heading reference changed
+        }, m_robotDrive));
   }
 
   /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
