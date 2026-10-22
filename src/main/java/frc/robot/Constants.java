@@ -158,10 +158,20 @@ public final class Constants {
     // Test values, NOT measured match-ready shot settings.
     // Motor 9 was previously driven with negative duty cycle.
     public static final double MOTOR_DIRECTION = -1.0;
-    // Original 50% driver-controlled duty cycle. Manual/uncalibrated auto
-    // operation uses this, never an RPM-to-percent conversion.
-    public static final double DEFAULT_OUTPUT_PERCENT = 50.0;
-    // Only direct duty-cycle output control; no RPM targets or tuning.
+    // Shooter runs in on-controller VELOCITY closed loop (motor shaft RPM).
+    // Explicitly zero at boot: B does nothing until an RPM is selected.
+    public static final double DEFAULT_TARGET_RPM = 0.0;
+    public static final double MAX_TARGET_RPM = 4500.0;
+    public static final double NOMINAL_VOLTAGE = 12.0;
+    // Starting point only. Tune against measured loaded response.
+    // SPARK kV units are VOLTS / motor RPM in REVLib 2026.
+    public static final double VELOCITY_KV_VOLTS_PER_RPM =
+        NOMINAL_VOLTAGE / NeoMotorConstants.kFreeSpeedRpm;
+    // SPARK PID gains operate on RPM error and output duty cycle.
+    public static final double VELOCITY_KP = 0.0001;
+    public static final double VELOCITY_KI = 0.0;
+    public static final double VELOCITY_KD = 0.0;
+    // Limits are independent of closed-loop regulation.
     public static final int CURRENT_LIMIT_AMPS = 20;
     public static final double MAX_MOTOR_OUTPUT = 1.0;
   }
