@@ -35,18 +35,18 @@ can be off even when geometric unit tests pass.
 2. Robot stays DISABLED, on a LEVEL floor. Use an AprilTag mounted at the
    EXACT OFFICIAL 2026 field-layout height; **an arbitrary practice-tag
    height invalidates the comparison**, even if the tag ID matches.
-3. View Shuffleboard `Vision` values:
-   - `Camera Expected PV Orientation (deg)`: expected UI setting (180),
+3. View the `Vision` and `Vision Diagnostics` Shuffleboard tabs:
+   - `Vision Diagnostics` — `Camera Expected PV Orientation (deg)`: expected UI setting (180),
      NOT an actual readback from PhotonVision.
-   - `Camera Config Roll/Pitch/Yaw (deg)`: effective `ROBOT_TO_CAMERA`
+   - `Vision Diagnostics` — `Camera Config Roll/Pitch/Yaw (deg)`: effective `ROBOT_TO_CAMERA`
      settings (0/-25/0).
-   - `Camera Mount Tag ID`: which observed tag was selected.
-   - `Camera Mount Tag Z (m)`: reconstructed target height above robot
+   - `Vision Diagnostics` — `Camera Mount Tag ID`: which observed tag was selected.
+   - `Vision Diagnostics` — `Camera Mount Tag Z (m)`: reconstructed target height above robot
      floor, assuming the robot is level and its origin is at ground Z=0.
-   - `Camera Mount Tag Height Error (m)`: reconstructed tag Z minus the
+   - `Vision` — `Camera Mount Tag Height Error (m)`: reconstructed tag Z minus the
      official WPILib tag height. Compare while slowly changing camera
      position across DISTANCES with the robot safely DISABLED.
-   - `Camera Mount Check Status`: whether the height residual is small or
+   - `Vision` — `Camera Mount Check Status`: whether the height residual is small or
      large; it does not by itself validate lateral position, yaw, or roll.
 4. Compare tag X/Y and range with physically measured positions. A
    nonzero error that grows with tag distance suggests a pitch/roll
@@ -211,7 +211,7 @@ invalid position or HUB too close.
 
 PhotonVision documentation: `estimateCoprocMultiTagPose(result)` needs a
 **coprocessor MultiTag result**, not merely multiple target detections.
-The robot reports this distinction directly on the `Vision` dashboard:
+The robot reports this distinction on the `Vision Diagnostics` tab:
 
 1. `Raw Detected Tag Count`: number of targets in the latest camera frame.
 2. `Raw Coproc MultiTag Present`: whether PhotonVision transmitted
@@ -238,22 +238,22 @@ AprilTags are insufficient for official global field localization.
 
 ### If X is pressed but chassis does not rotate
 
-On the `Vision` tab inspect these in order:
-1. `HUB X Button Pressed`: true **while holding X** proves controller mapping.
-2. `HUB Align Requested`: true **after one press** proves the toggle fired.
-3. `HUB Teleop Enabled`: must be true; Disabled and autonomous do not
+On the `Vision` tab inspect these in order (the button and telemetry details identified below are on `Vision Diagnostics`):
+1. `HUB X Button Pressed` (Vision Diagnostics): true **while holding X** proves controller mapping.
+2. `Hub Center Align` (Drive): true **after one press** proves the toggle fired.
+3. `HUB Teleop Enabled` (Vision Diagnostics): must be true; Disabled and autonomous do not
    execute the manual drive/default HUB heading controller.
-4. `HUB Turn Blocker`: displays the first unmet interlock. Do not disable
+4. `HUB Turn Blocker` (Vision): displays the first unmet interlock. Do not disable
    interlocks just to make wheels move.
-5. `HUB Turn Command (%)`: nonzero means aim computes a rotation command.
+5. `HUB Turn Command (%)` (Vision): nonzero means aim computes a rotation command.
    If it is nonzero and chassis remains still, check drive speed percentage,
    manual trigger turn, swerve wheel steering/motor state and driver station
    output, with wheels safely elevated under team supervision.
-6. `HUB Error (deg)`: may be near zero if already aligned, where 0% is
+6. `HUB Error (deg)` (Vision): may be near zero if already aligned, where 0% is
    expected. If camera localization is wrong, do not use trim as a fix.
-7. `Vision Gate Status`: rejected PnP frames prevent fusion. For any
+7. `Vision Gate Status` (Vision): rejected PnP frames prevent fusion. For any
    stop status check field JSON, camera extrinsics, tag distances, navX.
-8. `Pose Init Status`: first global pose requires a fresh multitag
+8. `Pose Init Status` (Vision): first global pose requires a fresh multitag
    solution, camera verification, and one disabled-only Reset Pose toggle.
    Start-button navX zeroing is NOT field-pose initialization.
 
@@ -296,3 +296,10 @@ Important: This project DOES NOT apply projectile travel-time / lateral
 lead for shooting while translating. It points the launch axis toward
 the stationary HUB center. Shooting-on-the-move trajectory compensation
 requires separate calibration and validation.
+
+## Maintenance notes — 2026-10-22
+
+- Shuffleboard operator views are now separated from detailed telemetry: `Drive`, `Shooter`, `Shot Tuning`, `Hood`, `Intake`, `Intake Arm`, `Vision` and the dedicated `Vision Diagnostics`, `Drive Diagnostics`, `PathPlanner Diagnostics`, `Hood Diagnostics` tabs. Historical dashboard layouts may still retain locally saved widgets after a code change.
+- The former `TestAutoWithShooter.auto` was archived under `docs/pathplanner-drafts/` because its `shoot 1` and `shoot 2` path files are missing. The original draft is preserved; it is not selectable as a deployed autonomous routine until complete. `TestAuto.auto` remains and its paths are present.
+- Intake roller CAN IDs 16 and 17 were restored from the former `shooter-integration` branch. The arm CAN 15 configuration and physical directions/limits still require robot-level verification.
+- The current `HoodDistanceCalculator` and `HubDistanceCalculator` are isolated tested geometry utilities; neither is currently wired into automatic hood positioning. Do not treat their existence as an enabled distance-to-hood feature.
