@@ -158,8 +158,9 @@ public final class HubRelativeTarget {
     Candidate seed = candidates.stream().min(Comparator.comparingDouble(c ->
         candidates.stream().mapToDouble(other ->
             c.hubOdom().getDistance(other.hubOdom())).sum())).orElseThrow();
+    Candidate consensusSeed = seed;
     List<Candidate> consistent = candidates.stream()
-        .filter(c -> c.hubOdom().getDistance(seed.hubOdom())
+        .filter(c -> c.hubOdom().getDistance(consensusSeed.hubOdom())
             <= CONSENSUS_RADIUS_METERS).toList();
     if (consistent.isEmpty()) {
       status = "HUB TAGS DISAGREE";
