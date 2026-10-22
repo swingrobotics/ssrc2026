@@ -341,6 +341,16 @@ public class RobotContainer {
             : "PREVIEW ONLY - REPAIR SWERVE WHEEL FIRST");
     visionTab.addString("HUB Aim Source", m_hubCenterAlign::getSource);
     visionDebugTab.addString("HUB Direct Status", m_hubRelativeTarget::getStatus);
+    // Per-tag gate results and raw 3D values. These are telemetry only;
+    // they never override a rejected measurement or enable auto rotation.
+    visionDebugTab.addString("HUB Tag 25 Diagnostics",
+        m_hubRelativeTarget::getTag25Diagnostics);
+    visionDebugTab.addString("HUB Tag 26 Diagnostics",
+        m_hubRelativeTarget::getTag26Diagnostics);
+    visionDebugTab.addString("HUB Direct Last Rejection",
+        m_hubRelativeTarget::getLastRejectionReason);
+    visionDebugTab.addDouble("HUB Valid Candidate Count",
+        m_hubRelativeTarget::getValidCandidateCount);
     visionTab.addBoolean("HUB Direct Fresh",
         () -> m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp()));
     visionDebugTab.addDouble("HUB Direct Tag Count",

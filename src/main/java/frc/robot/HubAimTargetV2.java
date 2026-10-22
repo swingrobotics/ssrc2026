@@ -13,6 +13,7 @@ import frc.robot.Constants.VisionConstants;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.photonvision.targeting.PhotonTrackedTarget;
 
@@ -39,6 +40,11 @@ public final class HubAimTargetV2 {
   private Alliance targetAlliance = null;
   private int rejectedFrames = 0;
   private String status = "WAITING FOR HUB TAG";
+  // Only diagnostics: these values never authorize rotation or bypass filtering.
+  private String tag25Diagnostics = "NO FRAME YET";
+  private String tag26Diagnostics = "NO FRAME YET";
+  private String lastRejectionReason = "NONE";
+  private int validCandidateCount = 0;
 
   private record Candidate(Translation2d hub, Alliance alliance, int id, double weight) {}
 
@@ -89,9 +95,42 @@ public final class HubAimTargetV2 {
         ? Optional.of(relative) : Optional.empty();
   }
 
+  /**
+   * Stores the raw per-tag measurement and the exact gate result for tags
+   * 25/26, without modifying the active acceptance criteria.
+   */
+  private void recordTagDiagnostic(PhotonTrackedTarget target, String gate) {
+    int id = target.getFiducialId();
+    if (id != 25 && id != 26) return;
+    Transform3d transform = target.getBestCameraToTarget();
+    Translation3d xyz = transform == null ? null : transform.getTranslation();
+    double x = xyz == null ? Double.NaN : xyz.getX();
+    double y = xyz == null ? Double.NaN : xyz.getY();
+    double z = xyz == null ? Double.NaN : xyz.getZ();
+    double range = xyz == null ? Double.NaN : xyz.getNorm();
+    String alliance = allianceForTag(id).map(Enum::name).orElse("UNKNOWN");
+    String info = String.format(Locale.US,
+        "ID=%d alliance=%s ambiguity=%.5f xyz=(%.3f, %.3f, %.3f)m range=%.3fm => %s",
+        id, alliance, target.getPoseAmbiguity(), x, y, z, range, gate);
+    if (id == 25) tag25Diagnostics = info;
+    else tag26Diagnostics = info;
+  }
+
+  /** Record the result for a candidate already in the accepted-candidate list. */
+  private void recordCandidateDecision(List<PhotonTrackedTarget> targets, int id, String gate) {
+    for (PhotonTrackedTarget target : targets) {
+      if (target.getFiducialId() == id) {
+        recordTagDiagnostic(target, gate);
+      }
+    }
+  }
+
   public void observe(List<PhotonTrackedTarget> targets,
       Optional<Alliance> knownAlliance, Pose2d poseAtCapture,
       double timestamp, double now) {
+    validCandidateCount = 0;
+    tag25Diagnostics = "NOT_SEEN_THIS_FRAME";
+    tag26Diagnostics = "NOT_SEEN_THIS_FRAME";
     if (targets == null || targets.isEmpty()) {
       status = "NO HUB TAGS";
       return;
@@ -103,30 +142,56 @@ public final class HubAimTargetV2 {
         || !Double.isFinite(timestamp) || !Double.isFinite(now)
         || timestamp <= lastCaptureTime
         || timestamp - now > 0.05 || now - timestamp > FRAME_MAX_AGE_S) {
+      for (PhotonTrackedTarget target : targets) {
+        recordTagDiagnostic(target, "STALE_FRAME_OR_MISSING_ODOMETRY");
+      }
       reject("STALE FRAME OR MISSING CAPTURE-TIME ODOMETRY");
       return;
     }
 
     List<Candidate> candidates = new ArrayList<>();
     for (PhotonTrackedTarget target : targets) {
-      Optional<Alliance> candidateAlliance = allianceForTag(target.getFiducialId());
-      if (candidateAlliance.isEmpty() || (knownAlliance.isPresent()
-          && candidateAlliance.get() != knownAlliance.get())) continue;
+      int id = target.getFiducialId();
+      Optional<Alliance> candidateAlliance = allianceForTag(id);
+      if (candidateAlliance.isEmpty()) {
+        recordTagDiagnostic(target, "NOT_HUB_TAG");
+        continue;
+      }
+      if (knownAlliance.isPresent() && candidateAlliance.get() != knownAlliance.get()) {
+        recordTagDiagnostic(target, "ALLIANCE_MISMATCH");
+        continue;
+      }
       double ambiguity = target.getPoseAmbiguity();
       if (!Double.isFinite(ambiguity) || ambiguity < 0
-          || ambiguity > MAX_AMBIGUITY) continue;
+          || ambiguity > MAX_AMBIGUITY) {
+        recordTagDiagnostic(target, "INVALID_AMBIGUITY (required 0 to 0.20)");
+        continue;
+      }
+      Transform3d cameraToTag = target.getBestCameraToTarget();
+      Translation3d measurement = cameraToTag == null ? null : cameraToTag.getTranslation();
+      double range = measurement == null ? Double.NaN : measurement.getNorm();
+      if (!Double.isFinite(range) || range < 0.15 || range > MAX_TAG_RANGE_M) {
+        recordTagDiagnostic(target, "INVALID_TRANSFORM (range missing/out of bounds)");
+        continue;
+      }
       Optional<Translation2d> relative = hubRelativeToRobot(
-          target.getFiducialId(), target.getBestCameraToTarget(),
-          layout, VisionConstants.ROBOT_TO_CAMERA);
-      if (relative.isEmpty()) continue;
+          id, cameraToTag, layout, VisionConstants.ROBOT_TO_CAMERA);
+      if (relative.isEmpty()) {
+        recordTagDiagnostic(target, "INVALID_HUB_GEOMETRY");
+        continue;
+      }
       Translation2d point = poseAtCapture.getTranslation().plus(
           relative.get().rotateBy(poseAtCapture.getRotation()));
-      if (!Double.isFinite(point.getX()) || !Double.isFinite(point.getY())) continue;
-      double distance = target.getBestCameraToTarget().getTranslation().getNorm();
+      if (!Double.isFinite(point.getX()) || !Double.isFinite(point.getY())) {
+        recordTagDiagnostic(target, "INVALID_HUB_GEOMETRY (nonfinite position)");
+        continue;
+      }
+      double distance = cameraToTag.getTranslation().getNorm();
       double weight = 1.0 / (0.05 + ambiguity + 0.025 * distance * distance);
-      candidates.add(new Candidate(
-          point, candidateAlliance.get(), target.getFiducialId(), weight));
+      candidates.add(new Candidate(point, candidateAlliance.get(), id, weight));
+      recordTagDiagnostic(target, "ACCEPTED_CANDIDATE");
     }
+    validCandidateCount = candidates.size();
     if (candidates.isEmpty()) {
       reject("NO VALID INDIVIDUAL 3D HUB TAG");
       return;
@@ -136,6 +201,9 @@ public final class HubAimTargetV2 {
     if (knownAlliance.isEmpty()) {
       Alliance firstColor = candidates.get(0).alliance();
       if (candidates.stream().anyMatch(t -> t.alliance() != firstColor)) {
+        for (Candidate c : candidates) {
+          recordCandidateDecision(targets, c.id(), "MIXED_ALLIANCE_HUB_TAGS");
+        }
         reject("MIXED ALLIANCE HUB TAGS");
         return;
       }
@@ -146,8 +214,15 @@ public final class HubAimTargetV2 {
     List<Candidate> consensus = candidates.stream().filter(
         c -> c.hub().getDistance(seed.hub()) <= TAG_CONSENSUS_M).toList();
     if (candidates.size() > 1 && consensus.size() < 2) {
+      for (Candidate c : candidates) {
+        recordCandidateDecision(targets, c.id(), "CONSENSUS_REJECTED");
+      }
       reject("HUB TAGS DISAGREE");
       return;
+    }
+    for (Candidate c : candidates) {
+      recordCandidateDecision(targets, c.id(),
+          consensus.contains(c) ? "ACCEPTED" : "CONSENSUS_REJECTED");
     }
 
     double x = 0, y = 0, totalWeight = 0;
@@ -158,6 +233,9 @@ public final class HubAimTargetV2 {
     }
     Translation2d fresh = new Translation2d(x / totalWeight, y / totalWeight);
     if (isFresh(now) && fresh.getDistance(hubInOdometry) > MAX_TARGET_STEP_M) {
+      for (Candidate c : consensus) {
+        recordCandidateDecision(targets, c.id(), "HUB_POSITION_JUMP");
+      }
       reject("HUB POSITION JUMP");
       return;
     }
@@ -172,6 +250,7 @@ public final class HubAimTargetV2 {
 
   private void reject(String reason) {
     status = reason;
+    lastRejectionReason = reason;
     rejectedFrames++;
     // Never keep output from a newly discovered invalid geometry disagreement.
     if ("HUB TAGS DISAGREE".equals(reason) || "MIXED ALLIANCE HUB TAGS".equals(reason)
@@ -195,8 +274,16 @@ public final class HubAimTargetV2 {
     lastTagCount = 0;
     lastHubTagId = -1;
     targetAlliance = null;
+    validCandidateCount = 0;
+    tag25Diagnostics = "NO FRAME YET";
+    tag26Diagnostics = "NO FRAME YET";
+    lastRejectionReason = "NONE";
     status = "WAITING FOR HUB TAG";
   }
+  public String getTag25Diagnostics() { return tag25Diagnostics; }
+  public String getTag26Diagnostics() { return tag26Diagnostics; }
+  public String getLastRejectionReason() { return lastRejectionReason; }
+  public int getValidCandidateCount() { return validCandidateCount; }
   public String getStatus() { return status; }
   public int getLastTagCount() { return lastTagCount; }
   public int getLastHubTagId() { return lastHubTagId; }

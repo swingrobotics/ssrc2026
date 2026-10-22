@@ -97,6 +97,54 @@ class HubAimV2Test {
   }
 
   @Test
+  void perTagDiagnosticsIdentifyInvalidAmbiguityWithoutRelaxingTheGate() {
+    Pose3d robot = new Pose3d(3.4, 4.1, 0, new Rotation3d());
+    PhotonTrackedTarget good = tag(25, robot);
+    PhotonTrackedTarget missingAmbiguity = new PhotonTrackedTarget(0,0,0,0,
+        25,-1,0.0f,good.getBestCameraToTarget(),Transform3d.kZero,-1.0,
+        corners(),new ArrayList<>());
+    HubAimTargetV2 tracker = new HubAimTargetV2(VisionConstants.FIELD_LAYOUT);
+    tracker.observe(List.of(missingAmbiguity), Optional.of(Alliance.Blue),
+        Pose2d.kZero, 10.0, 10.05);
+    assertEquals("NO VALID INDIVIDUAL 3D HUB TAG", tracker.getStatus());
+    assertTrue(tracker.getTag25Diagnostics().contains("INVALID_AMBIGUITY"));
+    assertTrue(tracker.getTag25Diagnostics().contains("ambiguity=-1.00000"));
+    assertEquals(0, tracker.getValidCandidateCount());
+    assertTrue(tracker.getTag26Diagnostics().contains("NOT_SEEN_THIS_FRAME"));
+    assertEquals("NO VALID INDIVIDUAL 3D HUB TAG", tracker.getLastRejectionReason());
+  }
+
+  @Test
+  void diagnosticsExposeMissing3DTransformAndValidIndividualTag() {
+    Pose3d robot = new Pose3d(3.4, 4.1, 0, new Rotation3d());
+    PhotonTrackedTarget missing = new PhotonTrackedTarget(0,0,0,0,
+        26,-1,0.0f,Transform3d.kZero,Transform3d.kZero,0.05,
+        corners(),new ArrayList<>());
+    HubAimTargetV2 tracker = new HubAimTargetV2(VisionConstants.FIELD_LAYOUT);
+    tracker.observe(List.of(missing), Optional.of(Alliance.Blue),
+        Pose2d.kZero, 20.0, 20.05);
+    assertTrue(tracker.getTag26Diagnostics().contains("INVALID_TRANSFORM"));
+    assertEquals(0, tracker.getValidCandidateCount());
+    tracker.observe(List.of(tag(25, robot)), Optional.of(Alliance.Blue),
+        Pose2d.kZero, 20.10, 20.15);
+    assertTrue(tracker.getTag25Diagnostics().contains("=> ACCEPTED"));
+    assertEquals(1, tracker.getValidCandidateCount());
+    assertTrue(tracker.isFresh(20.16));
+  }
+
+  @Test
+  void diagnosticsReportAllianceMismatchAndStaleFrames() {
+    Pose3d robot = new Pose3d(3.4, 4.1, 0, new Rotation3d());
+    HubAimTargetV2 tracker = new HubAimTargetV2(VisionConstants.FIELD_LAYOUT);
+    tracker.observe(List.of(tag(25, robot)), Optional.of(Alliance.Red),
+        Pose2d.kZero, 30.0, 30.05);
+    assertTrue(tracker.getTag25Diagnostics().contains("ALLIANCE_MISMATCH"));
+    tracker.observe(List.of(tag(26, robot)), Optional.of(Alliance.Blue),
+        Pose2d.kZero, 30.10, 30.90);
+    assertTrue(tracker.getTag26Diagnostics().contains("STALE_FRAME"));
+  }
+
+  @Test
   void rotationWrapsAndFollowsTranslation() {
     assertEquals(45.0, HubAimHeadingV2.desiredHeading(
         Pose2d.kZero,new Translation2d(2,2),Translation2d.kZero,

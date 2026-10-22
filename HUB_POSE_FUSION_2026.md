@@ -191,6 +191,34 @@ These are essential interlocks, not optional tuning steps:
     A trim is NOT a repair for wrong camera calibration/field geometry.
     Record validated trim and measure launcher yaw mechanically.
 
+## Live V2 direct HUB tag diagnostics
+
+In `Vision Diagnostics`, `HUB Tag 25 Diagnostics` and `HUB Tag 26 Diagnostics`
+show each tag's ID, inferred alliance, raw pose ambiguity, camera-to-tag
+X/Y/Z (m), 3D range (m), and the actual acceptance gate result.
+`HUB Valid Candidate Count` counts individually accepted tag poses **before**
+cross-tag consensus. `HUB Direct Last Rejection` retains the latest rejected
+frame reason even after a later successful frame. A tag not detected in the
+latest frame displays `NOT_SEEN_THIS_FRAME`.
+
+- `INVALID_AMBIGUITY`: PhotonLib reports an ambiguity outside 0..0.20,
+  including -1 (not a valid single-target ambiguity). MultiTag solving can
+  succeed even when the independent single-target gate rejects a pose.
+- `INVALID_TRANSFORM`: the individual camera-to-tag 3D range is zero,
+  nonfinite, missing, or out of the configured range.
+- `INVALID_HUB_GEOMETRY`: converting the individual 3D tag pose to a
+  robot-relative HUB center failed the existing geometric bounds.
+- `ALLIANCE_MISMATCH`: Driver Station alliance does not match the tag's HUB.
+- `ACCEPTED`: the tag is part of the current agreed HUB estimate.
+  `CONSENSUS_REJECTED` means individual candidates disagree about the
+  position of the physical HUB.
+- `STALE_FRAME_OR_MISSING_ODOMETRY`: the capture timestamp or capture-time
+  odometry was unavailable/invalid.
+
+This change adds **telemetry only**. It does not relax ambiguity/geometry
+filters, change the aim calculation, or unlock automatic chassis rotation.
+Continue to verify camera mounting and actual field tag geometry separately.
+
 ## Failure/status inspection
 
 `Vision Gate Status` shows why an observation was rejected:
