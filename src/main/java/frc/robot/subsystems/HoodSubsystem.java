@@ -66,20 +66,20 @@ public class HoodSubsystem extends SubsystemBase {
         Shuffleboard.getTab("Hood")
                 .addDouble("Hood Encoder", this::getEncoderPosition);
 
-        Shuffleboard.getTab("Debug")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addBoolean("Hood Encoder Connected", hoodEncoder::isConnected);
 
-        Shuffleboard.getTab("Debug")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addBoolean("Hood Calibration Mode",
                         () -> HoodConstants.CALIBRATION_MODE);
 
-        Shuffleboard.getTab("Debug")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addBoolean("Hood Limits Configured", this::limitsConfigured);
 
-        Shuffleboard.getTab("Debug")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addBoolean("Hood At Min", this::isAtMin);
 
-        Shuffleboard.getTab("Debug")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addBoolean("Hood At Max", this::isAtMax);
 
         Shuffleboard.getTab("Hood")
@@ -89,10 +89,10 @@ public class HoodSubsystem extends SubsystemBase {
                 .addBoolean("Hood Hold Active",
                         () -> !HoodConstants.CALIBRATION_MODE
                                 && Double.isFinite(holdTarget));
-        Shuffleboard.getTab("Debug")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addDouble("Hood Hold Target",
                         () -> Double.isFinite(holdTarget) ? holdTarget : -1.0);
-        Shuffleboard.getTab("Debug")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addDouble("Hood Hold Error",
                         () -> Double.isFinite(holdTarget) && isHoodReady()
                                 ? holdTarget - getEncoderPosition() : 0.0);
@@ -102,7 +102,7 @@ public class HoodSubsystem extends SubsystemBase {
                 .addBoolean("Hood At Target", this::isAtTargetPosition);
         Shuffleboard.getTab("Hood")
                 .addDouble("Hood Hold Output", () -> holdOutput);
-        Shuffleboard.getTab("Debug")
+        Shuffleboard.getTab("Hood Diagnostics")
                 .addDouble("Hood Gravity Assist Applied (%)",
                         () -> appliedGravityAssist * 100.0);
     }
