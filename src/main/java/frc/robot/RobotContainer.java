@@ -132,7 +132,10 @@ public class RobotContainer {
   private final PhotonPoseEstimator m_photonPoseEstimator =
       new PhotonPoseEstimator(VisionConstants.FIELD_LAYOUT, VisionConstants.ROBOT_TO_CAMERA);
   private final HubAimHeadingV2 m_hubCenterAlign = new HubAimHeadingV2();
-  // Independent V2 direct HUB tracking; no global field pose seed needed.
+  // V3 is the active aiming target: one fixed HUB point in LOCAL odometry.
+  private final HubAimTrackerV3 m_hubTrackerV3 =
+      new HubAimTrackerV3(VisionConstants.FIELD_LAYOUT);
+  // Retain V2 as telemetry-only comparison until V3 is tested on the robot.
   private final HubAimTargetV2 m_hubRelativeTarget =
       new HubAimTargetV2(VisionConstants.FIELD_LAYOUT);
 
@@ -338,8 +341,58 @@ public class RobotContainer {
     visionTab.addString("HUB Safety Status", () ->
         Constants.HubAimSafety.ENABLE_AUTO_ROTATION
             ? "AUTO ROTATION ARMED: VERIFY SWERVE"
-            : "PREVIEW ONLY - REPAIR SWERVE WHEEL FIRST");
+            : "V3 PREVIEW ONLY - CAMERA GEOMETRY UNVERIFIED");
     visionTab.addString("HUB Aim Source", m_hubCenterAlign::getSource);
+    // Read-only V3 numbers have their OWN tab, separate from V2 diagnostics.
+    ShuffleboardTab hubV3Tab = Shuffleboard.getTab("HUB V3");
+    hubV3Tab.addString("V3 Tracking State",
+        () -> m_hubTrackerV3.getStatus(Timer.getFPGATimestamp()))
+        .withPosition(0, 0).withSize(4, 1);
+    hubV3Tab.addBoolean("V3 Target Locked",
+        () -> m_hubTrackerV3.hasLock(Timer.getFPGATimestamp()))
+        .withPosition(4, 0).withSize(2, 1);
+    hubV3Tab.addBoolean("V3 Camera Fresh",
+        () -> m_hubTrackerV3.hasLiveTag(Timer.getFPGATimestamp()))
+        .withPosition(6, 0).withSize(2, 1);
+    hubV3Tab.addDouble("V3 HUB Odom X (m)",
+        () -> m_hubTrackerV3.getHubX(Timer.getFPGATimestamp()))
+        .withPosition(0, 1).withSize(2, 1);
+    hubV3Tab.addDouble("V3 HUB Odom Y (m)",
+        () -> m_hubTrackerV3.getHubY(Timer.getFPGATimestamp()))
+        .withPosition(2, 1).withSize(2, 1);
+    hubV3Tab.addDouble("V3 Tag Age (s)",
+        () -> m_hubTrackerV3.getTargetAge(Timer.getFPGATimestamp()))
+        .withPosition(4, 1).withSize(2, 1);
+    hubV3Tab.addDouble("V3 Used Tag Count", m_hubTrackerV3::getTagCount)
+        .withPosition(6, 1).withSize(2, 1);
+    hubV3Tab.addDouble("V3 Robot Odom X", () -> m_robotDrive.getPose().getX())
+        .withPosition(0, 2).withSize(2, 1);
+    hubV3Tab.addDouble("V3 Robot Odom Y", () -> m_robotDrive.getPose().getY())
+        .withPosition(2, 2).withSize(2, 1);
+    hubV3Tab.addDouble("V3 Bearing (deg)",
+        () -> m_hubTrackerV3.getBearingDegrees(
+            m_robotDrive.getPose(), Timer.getFPGATimestamp()))
+        .withPosition(4, 2).withSize(2, 1);
+    hubV3Tab.addDouble("V3 Distance (m)",
+        () -> m_hubTrackerV3.getDistanceMeters(
+            m_robotDrive.getPose(), Timer.getFPGATimestamp()))
+        .withPosition(6, 2).withSize(2, 1);
+    hubV3Tab.addDouble("V3 Heading Error (deg)",
+        m_hubCenterAlign::getHeadingErrorDegrees)
+        .withPosition(0, 3).withSize(2, 1);
+    hubV3Tab.addDouble("V3 Desired Heading (deg)",
+        m_hubCenterAlign::getDesiredHeadingDegrees)
+        .withPosition(2, 3).withSize(2, 1);
+    hubV3Tab.addBoolean("V3 Geometry Verified",
+        () -> m_directHubGeometryEntry.getBoolean(false))
+        .withPosition(4, 3).withSize(2, 1);
+    hubV3Tab.addBoolean("V3 Auto Turn Armed",
+        () -> Constants.HubAimSafety.ENABLE_AUTO_ROTATION)
+        .withPosition(6, 3).withSize(2, 1);
+    hubV3Tab.addString("V3 Last Rejection", m_hubTrackerV3::getLastRejection)
+        .withPosition(0, 4).withSize(6, 1);
+    hubV3Tab.addString("V3 Alliance", m_hubTrackerV3::getAlliance)
+        .withPosition(6, 4).withSize(2, 1);
     visionDebugTab.addString("HUB Direct Status", m_hubRelativeTarget::getStatus);
     // Keep the already-crowded Vision Diagnostics tab readable. Use a new
     // dedicated tab to show per-tag rejection gates in SHORT strings and
@@ -804,12 +857,15 @@ public class RobotContainer {
       // Process all visible HUB tags for LOCAL relative aiming first,
       // regardless of success/failure in the separate global pose solver.
       // Rewind odometry to the image timestamp before transforming HUB XY.
+      Pose2d cameraCapturePose =
+          m_robotDrive.getPoseAtTime(result.getTimestampSeconds()).orElse(null);
+      // V3 owns aim; V2 receives the exact same data for comparison only.
+      m_hubTrackerV3.observe(
+          result.getTargets(), DriverStation.getAlliance(),
+          cameraCapturePose, result.getTimestampSeconds(), now);
       m_hubRelativeTarget.observe(
-          result.getTargets(),
-          DriverStation.getAlliance(),
-          m_robotDrive.getPoseAtTime(result.getTimestampSeconds()).orElse(null),
-          result.getTimestampSeconds(),
-          now);
+          result.getTargets(), DriverStation.getAlliance(),
+          cameraCapturePose, result.getTimestampSeconds(), now);
       m_lastDetectedTagCount = result.getTargets().size();
       m_lastCoprocMultitagResultPresent = result.getMultiTagResult().isPresent();
       m_lastPhotonPoseMultitagSolved = false;
@@ -946,6 +1002,7 @@ public class RobotContainer {
       } else {
         m_robotDrive.resetOdometry(m_latestGoodSeedPose);
         m_hubRelativeTarget.clear(); // global odometry frame changed
+        m_hubTrackerV3.clear(); // fixed odometry point is no longer valid
         m_visionResetStatus = "INITIALIZED FROM VERIFIED MULTITAG POSE";
         // Wait for the next validated frame before allowing auto-aim.
       }
@@ -956,81 +1013,50 @@ public class RobotContainer {
 
 
   /**
-   * First unmet condition in the actual drive-to-HUB command chain.
-   * Never bypass these requirements just to make wheels rotate.
+   * First unmet condition of the ACTIVE V3-only motion chain.
+   * No global-field pose or V2 fallback is permitted to turn the chassis.
    */
   private String getHubRotationBlocker() {
     if (!DriverStation.isTeleopEnabled()) return "TELEOP NOT ENABLED";
-    if (!m_visionAlignEnabled) return "X: HUB ALIGN IS OFF";
+    if (!m_visionAlignEnabled) return "X: HUB AIM OFF";
     if (!Constants.HubAimSafety.ENABLE_AUTO_ROTATION)
-      return "HUB ROTATION LOCKED IN CODE: WHEEL REPAIR REQUIRED";
-    if (!m_robotDrive.isGyroReady()) return "NAVX NOT CONNECTED OR CALIBRATING";
-
-    boolean directFresh = m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp());
-    if (directFresh && m_directHubGeometryEntry.getBoolean(false)) {
-      return m_hubCenterAlign.isAligned() ? "DIRECT HUB: ALIGNED"
-          : "DIRECT HUB TAG 3D: " + m_hubCenterAlign.getStatus();
-    }
-
-    // The original field localization path is ONLY a secondary fallback.
-    if (m_fieldVerifiedEntry.getBoolean(false)
-        && m_robotDrive.isFieldPoseInitialized()
-        && m_robotDrive.hasRecentVision(1.0)
-        && DriverStation.getAlliance().isPresent()) {
-      return m_hubCenterAlign.isAligned() ? "FIELD FUSED: ALIGNED"
-          : "FIELD FUSED: " + m_hubCenterAlign.getStatus();
-    }
-
-    if (directFresh && !m_directHubGeometryEntry.getBoolean(false))
-      return "ENABLE HUB DIRECT GEOMETRY VERIFIED AFTER CALIBRATION";
-    if (!m_fieldVerifiedEntry.getBoolean(false))
-      return "NO DIRECT TARGET; FIELD CAMERA VERIFIED IS OFF";
-    if (!m_robotDrive.isFieldPoseInitialized())
-      return "NO DIRECT TARGET; FIELD POSE NOT INITIALIZED";
-    if (DriverStation.getAlliance().isEmpty())
-      return "NO DIRECT TARGET; ALLIANCE UNKNOWN";
-    if (!m_robotDrive.hasRecentVision(1.0))
-      return "NO DIRECT TARGET; FUSED VISION STALE";
-    return "NO VALID HUB TARGET: " + m_hubRelativeTarget.getStatus();
+      return "AUTO ROTATION CODE-LOCKED: VERIFY CAMERA GEOMETRY FIRST";
+    if (!m_robotDrive.isGyroReady()) return "NAVX NOT READY";
+    if (!m_directHubGeometryEntry.getBoolean(false))
+      return "CAMERA GEOMETRY NOT VERIFIED";
+    if (!m_hubTrackerV3.hasLock(Timer.getFPGATimestamp()))
+      return "NO V3 HUB LOCK: " + m_hubTrackerV3.getStatus(Timer.getFPGATimestamp());
+    return m_hubCenterAlign.isAligned() ? "V3 HUB ALIGNED"
+        : "V3 TARGET: " + m_hubTrackerV3.getStatus(Timer.getFPGATimestamp());
   }
 
-  /**
-   * Prefer the independently verified FRC 4107-style HUB-relative target.
-   * This path requires no global X/Y initialization and supports one tag.
-   * On missing/uncalibrated direct tag measurements, use the existing
-   * validated field-based aim when available.
-   */
+  /** Recompute direction to the SAME odometry-fixed HUB on every drive loop. */
   private double getDriveRotationCommand() {
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     if (!m_visionAlignEnabled) {
       m_lastHubTurnOutput = 0.0;
       return getTriggerRotation();
     }
-    // X can request/preview aiming but cannot rotate a chassis with a bad wheel.
-    if (!Constants.HubAimSafety.ENABLE_AUTO_ROTATION) {
+    // The prior ~0.225 m camera-height disagreement has NOT been resolved.
+    // Keep this code-level interlock false pending physical V3 validation.
+    if (!Constants.HubAimSafety.ENABLE_AUTO_ROTATION
+        || !m_directHubGeometryEntry.getBoolean(false)
+        || !m_robotDrive.isGyroReady()) {
       m_lastHubTurnOutput = 0.0;
       return 0.0;
     }
-
-    if (m_directHubGeometryEntry.getBoolean(false)
-        && m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp())) {
-      m_lastHubTurnOutput = m_hubCenterAlign.calculateDirectTurn(
-          m_robotDrive.getPose(),
-          m_robotDrive.getRobotRelativeSpeeds(),
-          m_hubRelativeTarget.getHubInOdometryFrame(
-              Timer.getFPGATimestamp()).orElse(null),
-          m_robotDrive.isGyroReady());
-      return m_lastHubTurnOutput;
+    Optional<Translation2d> fixedHub = m_hubTrackerV3.getHubInOdometry(
+        Timer.getFPGATimestamp());
+    if (fixedHub.isEmpty()) {
+      m_hubCenterAlign.stop();
+      m_lastHubTurnOutput = 0.0;
+      return 0.0;
     }
-
-    m_lastHubTurnOutput = m_hubCenterAlign.calculateTurn(
+    m_lastHubTurnOutput = m_hubCenterAlign.calculateDirectTurn(
         m_robotDrive.getPose(),
         m_robotDrive.getRobotRelativeSpeeds(),
-        DriverStation.getAlliance(),
-        m_robotDrive.isFieldPoseInitialized()
-            && m_fieldVerifiedEntry.getBoolean(false),
-        m_robotDrive.isGyroReady(),
-        m_robotDrive.hasRecentVision(1.0));
+        fixedHub.orElseThrow(),
+        m_robotDrive.isGyroReady());
     return m_lastHubTurnOutput;
   }
 
@@ -1111,6 +1137,7 @@ public class RobotContainer {
         .onTrue(new InstantCommand(() -> {
           m_robotDrive.zeroHeading();
           m_hubRelativeTarget.clear(); // odometry heading reference changed
+          m_hubTrackerV3.clear(); // fixed odometry point is no longer valid
         }, m_robotDrive));
   }
 
@@ -1135,12 +1162,12 @@ public class RobotContainer {
     OptionalDouble distance = OptionalDouble.empty();
     double now = Timer.getFPGATimestamp();
     if (m_directHubGeometryEntry.getBoolean(false)
-        && m_hubRelativeTarget.isFresh(now)) {
-      Optional<Translation2d> hub = m_hubRelativeTarget.getHubInOdometryFrame(now);
+        && m_hubTrackerV3.hasLock(now)) {
+      Optional<Translation2d> hub = m_hubTrackerV3.getHubInOdometry(now);
       if (hub.isPresent()) {
         distance = HubDistanceCalculator.calculateFromLocalHub(
             m_robotDrive.getPose(), hub.get());
-        if (distance.isPresent()) m_hoodPreviewSource = "FRESH DIRECT HUB TAG";
+        if (distance.isPresent()) m_hoodPreviewSource = "VERIFIED V3 ODOM HUB";
       }
     }
     if (distance.isEmpty()
@@ -1175,8 +1202,8 @@ public class RobotContainer {
   }
 
   /**
-   * Geometry-only preview works while Disabled; no automatic motor outputs.
-   * A valid recent tag and verified physical camera geometry are required.
+   * V3 read-only geometry preview. This is intentionally visible BEFORE
+   * certifying the camera, without changing any motor output/interlock.
    */
   private void updateHubAimPreview() {
     if (Constants.HubAimSafety.ENABLE_AUTO_ROTATION
@@ -1186,20 +1213,16 @@ public class RobotContainer {
       return;
     }
     double now = Timer.getFPGATimestamp();
-    Pose2d pose = m_robotDrive.getPose();
-    if (m_directHubGeometryEntry.getBoolean(false)
-        && m_hubRelativeTarget.isFresh(now)) {
-      m_hubRelativeTarget.getHubInOdometryFrame(now).ifPresent(hub ->
-          m_hubCenterAlign.previewOnly(pose, hub, "V2 DIRECT TAG"));
-    } else if (m_fieldVerifiedEntry.getBoolean(false)
-        && m_robotDrive.isFieldPoseInitialized()
-        && m_robotDrive.hasRecentVision(1.0)
-        && DriverStation.getAlliance().isPresent()) {
-      m_hubCenterAlign.previewOnly(pose, HubAimHeadingV2.hubForAlliance(
-          DriverStation.getAlliance().orElseThrow()), "V2 FIELD POSE");
-    } else {
+    Optional<Translation2d> fixedHub = m_hubTrackerV3.getHubInOdometry(now);
+    if (fixedHub.isEmpty()) {
       m_hubCenterAlign.stop();
+      return;
     }
+    String source = m_hubTrackerV3.hasLiveTag(now)
+        ? "V3 ODOM FIX (TAG)" : "V3 ODOM FIX (HOLD)";
+    if (!m_directHubGeometryEntry.getBoolean(false))
+      source += " - UNVERIFIED CAMERA";
+    m_hubCenterAlign.previewOnly(m_robotDrive.getPose(), fixedHub.orElseThrow(), source);
   }
 
   /**

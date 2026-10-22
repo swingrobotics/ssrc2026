@@ -8,7 +8,7 @@ Active development branch: `hub-pose-fusion-2026`. Java/WPILib 2026 command-base
 | --- | --- |
 | Left stick | Robot-relative swerve translation by default |
 | Left/right triggers | Manual chassis rotation when HUB align is off |
-| X (press) | Request HUB aiming; automatic chassis rotation stays locked while a swerve wheel is faulty |
+| X (press) | Toggle V3 odometry-fixed HUB-center tracking; auto rotation remains code-locked pending camera validation |
 | Y (press) | Toggle robot-relative / field-relative translation |
 | A (hold) | Feeder only, forward at Shooter > Feeder Speed (%); release stops feeder |
 | B (hold) | Shooter only, SPARK MAX Velocity PID at Shooter > Shooter RPM Setpoint; release stops shooter |
@@ -43,7 +43,7 @@ Check the actual direction, wiring and mechanical limits before enabling motion.
 ## HUB automatic heading alignment
 
 - Teleop X toggles tracking of the **center of the alliance HUB**, not the yaw of an individual AprilTag.
-- The preferred `HubRelativeTarget` route uses one or more calibrated 3-D tag measurements plus timestamped odometry. The field-pose solution is only an optional verified fallback.
+- Active V3 uses `HubAimTrackerV3` to estimate one HUB point in **local odometry coordinates** from calibrated AprilTag 3-D measurements. Chassis movement updates its bearing; the target is not moved with the robot. No global field-pose initialization or V2 fallback is needed for V3.
 - The `Hub Direct Geometry Verified` switch starts **false**; only enable after verifying camera mounting and tag geometry on the actual setup.
 - PhotonVision device: `PC_Camera`; image orientation is expected to be 180° and physical upward pitch 25°. The code assumes an effective camera transform with roll 0° and pitch -25°. Verify with real data before rotation.
 - No moving-shot lead, automatic distance-to-hood calibration, or launcher-offset calibration is claimed.
@@ -90,12 +90,20 @@ These commands do **not** deploy to the robot. Deployment and physical tests are
 
 This project was originally based on REV's MAXSwerve Java template. The original REV/WPILib license files and upstream changelog are retained for attribution and historical reference.
 
+## HUB automatic aiming V3 — experimental (2026-10-23)
+
+- New active `HubAimTrackerV3` uses the known tag mounting geometry to reconstruct the HUB center from one or more visible AprilTags, then stores it in the chassis local odometry frame at image capture time. Every drive/preview tick recomputes the robot-to-HUB bearing from updated odometry. When a tag reappears, the fixed point is corrected.
+- A missing tag can be bridged for **at most 0.80 s**; after that the target expires. Disagreeing tag fixes, target teleports, and odometry resets invalidate the target immediately.
+- The separate `HUB V3` Shuffleboard tab exposes target lock, tag freshness, local HUB X/Y, robot X/Y, bearing, distance, heading error and validation state. Heading previews are read-only even with `Hub Direct Geometry Verified` OFF.
+- **Auto rotation stays locked** via `HubAimSafety.ENABLE_AUTO_ROTATION=false` until the existing camera geometry disagreement is resolved and actual tests validate the target. This change does NOT shoot balls or change PathPlanner, drive/steer motors or their limits.
+- Old V2 and global pose code are retained for comparison and rollback; delete/consolidate them **only after V3 is successfully verified on the actual robot**.
+
 ## HUB automatic aiming V2 (2026-10-23)
 
-The new active classes are `HubAimTargetV2` and `HubAimHeadingV2`.
+The earlier classes were `HubAimTargetV2` and `HubAimHeadingV2`. V2 target is now a reference/diagnostic only, and the generic `HubAimHeadingV2` heading PID is reused by the V3 target.
 They reconstruct the HUB center using individual AprilTag 3D SolvePnP estimates, verify the data, reject conflicting targets, and calculate wrapped heading with a profiled controller. Legacy classes remain source-only to avoid losing work.
 
 **Current safety interlock:** `Constants.HubAimSafety.ENABLE_AUTO_ROTATION = false`.
-Pressing X may request aiming but cannot produce automatic rotation while a swerve module is faulty. Diagnostic heading previews are available in the Vision tab after camera geometry is independently verified. The switch is deliberately not editable in Shuffleboard.
+Pressing X may request aiming but cannot produce automatic rotation until the camera geometry is validated. Diagnostic heading previews are available in the Vision tab after camera geometry is independently verified. The switch is deliberately not editable in Shuffleboard.
 
 Before considering enabling rotation: fix and validate all four modules and the navX; calibrate/check PhotonVision intrinsics and camera-to-robot 3D pose; check official HUB tag layout, target heading and observed distance with the robot Disabled; inspect X-button and telemetry status. Unit tests are not a physical drivetrain test.

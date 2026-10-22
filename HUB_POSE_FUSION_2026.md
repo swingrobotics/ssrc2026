@@ -357,3 +357,28 @@ The older `HubRelativeTarget` and `HubCenterAlign` implementations are retained 
 
 Before review of this code lock: repair drive+turn module; verify gyro/pose and Swerve state in stationary and slow tests supervised by the team; verify PhotonVision camera physical position, orientation and single-target 3D SolvePnP; use the same Welded/AndyMark tag layout as the real field; compare target angle and distance against physical measurements while Disabled. The expected `Input Orientation=180 deg` does not guarantee that the 3D camera pose is correct.
 Design references: Storm4107/2026-Rebuilt; Team6940/2026Rebuilt; WPILib ProfiledPIDController; PhotonVision individual camera-to-target and MultiTag documentation.
+
+## V3 trial: fixed HUB point rather than full-field localization
+
+The active aim target is now `HubAimTrackerV3`. It uses a valid individual
+tag's 3D translation AND rotation, plus its known pose on the official HUB,
+to compute the physical HUB center in robot-relative coordinates. The robot
+odom pose sampled at camera capture time moves that target into a fixed local
+odometry frame. This fixed point is retained while the chassis translates
+and turns. Fresh tag sightings gently correct it. With a tag temporarily
+hidden, the point stays valid for at most **0.80 s**; otherwise V3 fails closed.
+
+Open `HUB V3` in Shuffleboard for `V3 Tracking State`, `V3 Target Locked`,
+`V3 Camera Fresh`, `V3 HUB Odom X/Y`, `V3 Robot Odom X/Y`,
+`V3 Bearing (deg)`, `V3 Distance (m)`, `V3 Heading Error (deg)`,
+and `V3 Last Rejection`. Check target X/Y remains nearly fixed while robot
+odometry changes as the chassis moves, and compare predicted bearing with
+the physical HUB at more than one robot pose.
+
+V3 read-only angle preview is available while `Hub Direct Geometry Verified`
+is OFF, so this switch does NOT need to be falsely affirmed to inspect V3.
+**Auto chassis rotation remains code-locked**. Before changing that, resolve
+the previously observed ~0.225 m discrepancy in reconstructed tag height,
+validate the measured bearing and distance on the real HUB, and plan a
+supervised low-speed safety trial. Old V2 remains as telemetry/reference only.
+Cleanup of old files is intentionally deferred until real V3 validation.
