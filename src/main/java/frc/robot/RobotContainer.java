@@ -81,8 +81,7 @@ public class RobotContainer {
   private final GenericEntry m_driveSpeedEntry;
    private final GenericEntry m_feederSpeedEntry;
   private final GenericEntry m_feederTestEntry;
-  private final GenericEntry m_shooterTargetRpmEntry;
-  private final GenericEntry m_shooterRpmToleranceEntry;
+  private final GenericEntry m_shooterSpeedEntry;
   private boolean m_teleopShootCommandActive = false;
   private boolean m_manualFeederCommandActive = false;
   private double m_feederDashboardTestDeadline = -1.0;
@@ -100,7 +99,7 @@ public class RobotContainer {
   private double m_autoStopStableSince = -1.0;
   private String m_autoLastShotResult = "NOT RUN";
   private boolean m_autoShooterRequested = false;
-  private double m_autoShooterTargetRPM = 0.0;
+  private double m_autoShooterTargetPercent = 0.0;
   private double m_autoShooterStartTime = -1.0;
   private String m_autoShooterStatus = "Idle";
   private final GenericEntry m_visionFusionEntry;
@@ -184,33 +183,24 @@ public class RobotContainer {
     driveTab.addBoolean("Hub Center Align", () -> m_visionAlignEnabled)
         .withPosition(3, 0);
 
-    // Closed-loop shooter target is motor-shaft RPM, never an output %.
+    // Shooter output is DIRECT duty-cycle percentage, as in the old branch.
     ShuffleboardTab shooterTab = Shuffleboard.getTab("Shooter");
-    m_shooterTargetRpmEntry = shooterTab.add(
-        "Shooter RPM Setpoint", ShooterConstants.DEFAULT_TARGET_RPM)
+    m_shooterSpeedEntry = shooterTab.add(
+        "Shooter Output (%)", ShooterConstants.DEFAULT_OUTPUT_PERCENT)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 0.0, "max", ShooterConstants.MAX_TARGET_RPM))
+        .withProperties(Map.of("min", 0.0,
+            "max", ShooterConstants.MAX_MOTOR_OUTPUT * 100.0))
         .withPosition(0, 0).withSize(3, 1).getEntry();
     m_feederSpeedEntry = shooterTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0))
         .withPosition(3, 0).withSize(3, 1).getEntry();
-    // This explicit momentary request is NOT the output slider. Any accepted
-    // request expires after 2 seconds and is rejected outside TELEOP.
     m_feederTestEntry = shooterTab.add("Feeder Test (2 s)", false)
         .withWidget(BuiltInWidgets.kToggleButton)
         .withPosition(3, 3).withSize(2, 1).getEntry();
-    m_feederTestEntry.setBoolean(false); // never carry a prior latched request
-    // Tolerance is used to confirm a closed-loop setpoint for autonomous shots.
-    m_shooterRpmToleranceEntry = shooterTab.add("Shooter RPM Tolerance", 150.0)
-        .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 25.0, "max", 500.0))
-        .withPosition(2, 1).withSize(2, 1).getEntry();
-    shooterTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM)
+    m_feederTestEntry.setBoolean(false);
+    shooterTab.addDouble("Shooter Actual RPM (diagnostic only)", m_shooter::getActualRPM)
         .withPosition(4, 1).withSize(2, 1);
-    shooterTab.addBoolean("Shooter At Target RPM",
-        () -> m_shooter.isAtTargetRPM(getShooterTargetRPM(), getShooterRpmTolerance()))
-        .withPosition(6, 1).withSize(2, 1);
     shooterTab.addString("Feeder Direction", m_feeder::getDirection)
         .withPosition(6, 0).withSize(2, 1);
     shooterTab.addString("Shooter Feeder Status", this::getTeleopShooterFeederStatus)
@@ -237,7 +227,7 @@ public class RobotContainer {
     mechanismDebug.addDouble("Feeder Speed Setpoint (%)",
         () -> getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent) * 100.0);
 
-    // Shooter RPM is controlled by the SPARK MAX closed loop on CAN 9.
+    // Shooter CAN 9 direct duty cycle, with 10/12 hardware followers.
     // A-button feeder control remains manual and independent.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
     m_autoFeederEnabledEntry = shotTab.add("Autonomous Feeder Enabled", false).getEntry();
@@ -539,7 +529,7 @@ public class RobotContainer {
     // with drive subsystem requirements interfering with path following).
     m_shooter.setDefaultCommand(new RunCommand(() -> {
       if (DriverStation.isAutonomousEnabled() && m_autoShooterRequested) {
-        m_shooter.setTargetRPM(m_autoShooterTargetRPM);
+        m_shooter.setOutputPercent(m_autoShooterTargetPercent);
       } else if (m_shooter.isRunning()) {
         m_shooter.stopShooter();
       }
@@ -558,16 +548,10 @@ public class RobotContainer {
     return Double.isFinite(percent) ? MathUtil.clamp(percent, 0.0, 100.0) / 100.0 : 0.0;
   }
 
-  /** Zero/off and invalid targets are rejected, not converted to duty cycle. */
-  private double getShooterTargetRPM() {
-    return ShooterVelocitySetpoint.sanitizeRPM(
-        m_shooterTargetRpmEntry.getDouble(ShooterConstants.DEFAULT_TARGET_RPM));
-  }
-
-  private double getShooterRpmTolerance() {
-    double tolerance = m_shooterRpmToleranceEntry.getDouble(150.0);
-    return Double.isFinite(tolerance) && tolerance > 0.0
-        ? MathUtil.clamp(tolerance, 1.0, 500.0) : 0.0;
+  /** Read the user-selected direct shooter motor percentage. */
+  private double getShooterOutputPercent() {
+    return ShooterSubsystem.sanitizeOutputPercent(
+        m_shooterSpeedEntry.getDouble(ShooterConstants.DEFAULT_OUTPUT_PERCENT));
   }
 
   /** Describes the independent A feeder and B shooter teleop controls. */
@@ -747,21 +731,21 @@ public class RobotContainer {
       m_autoShooterStatus = "BLOCKED: hood encoder not ready";
       return;
     }
-    double targetRpm = getShooterTargetRPM();
-    if (targetRpm <= 0.0) {
-      m_autoShooterStatus = "BLOCKED: set a valid Shooter RPM Setpoint";
+    double outputPercent = getShooterOutputPercent();
+    if (outputPercent <= 0.0) {
+      m_autoShooterStatus = "BLOCKED: Shooter Output (%) is zero";
       return;
     }
-    m_autoShooterTargetRPM = targetRpm;
+    m_autoShooterTargetPercent = outputPercent;
     m_autoShooterStartTime = Timer.getFPGATimestamp();
     m_autoShooterRequested = true;
-    m_autoShooterStatus = "SPINNING: closed-loop motor RPM";
+    m_autoShooterStatus = "SPINNING: shooter duty-cycle percent";
   }
 
   private boolean isAutonomousShooterReady() {
     return DriverStation.isAutonomousEnabled()
         && m_autoShooterRequested && m_hood.isHoodReady()
-        && m_shooter.isAtTargetRPM(m_autoShooterTargetRPM, getShooterRpmTolerance())
+        && m_shooter.isReadyToFeed()
         && m_autoShooterStartTime >= 0.0
         && Timer.getFPGATimestamp() - m_autoShooterStartTime >= 1.0;
   }
@@ -770,7 +754,7 @@ public class RobotContainer {
     m_feeder.stopFeeder();
     m_autoFeedDeadline = -1.0;
     m_autoShooterRequested = false;
-    m_autoShooterTargetRPM = 0.0;
+    m_autoShooterTargetPercent = 0.0;
     m_autoShooterStartTime = -1.0;
     m_shooter.stopShooter();
     m_autoShooterStatus = "STOPPED";
@@ -1066,7 +1050,7 @@ public class RobotContainer {
         .whileTrue(Commands.runEnd(
             () -> {
               m_teleopShootCommandActive = true;
-              m_shooter.setTargetRPM(getShooterTargetRPM());
+              m_shooter.setOutputPercent(getShooterOutputPercent());
             },
             () -> {
               m_shooter.stopShooter();

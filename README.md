@@ -11,7 +11,7 @@ Active development branch: `hub-pose-fusion-2026`. Java/WPILib 2026 command-base
 | X (press) | Toggle V3 automatic HUB-center rotation directly during Teleop; press again to stop |
 | Y (press) | Toggle robot-relative / field-relative translation |
 | A (hold) | Feeder only, forward at Shooter > Feeder Speed (%); release stops feeder |
-| B (hold) | Shooter only, SPARK MAX Velocity PID at Shooter > Shooter RPM Setpoint; release stops shooter |
+| B (hold) | Shooter only, direct output % from Shooter > Shooter Output (%); release stops shooter |
 | A + B (hold) | Independent feeder and shooter run together; either button can be released without stopping the other |
 | Left bumper (hold) | Intake rollers |
 | D-pad up/down (hold) | Intake arm forward/backward, limited runtime |
@@ -26,7 +26,7 @@ Check the actual direction, wiring and mechanical limits before enabling motion.
 | Tab | Purpose |
 | --- | --- |
 | Drive | Driving controls, field pose and autonomous chooser |
-| Shooter | Shooter motor RPM setpoint (starts at 0 = disarmed), PID/RPM feedback, feeder speed and 2-second feeder test |
+| Shooter | Shooter Output (%) slider, default 50%, range 0–75%; B shooter, A feeder |
 | Shot Tuning | Gated autonomous firing setup and status |
 | Hood | Hood command/hold overview |
 | Intake / Intake Arm | Roller and arm diagnostics |
@@ -50,13 +50,14 @@ Check the actual direction, wiring and mechanical limits before enabling motion.
 
 **Detailed camera and safe validation steps:** [HUB_POSE_FUSION_2026.md](HUB_POSE_FUSION_2026.md).
 
-## Shooter velocity control
+## Shooter percentage output (restored from intake-subsystem / vscode-local-20261022)
 
-- B (hold) runs **only** the shooter. CAN 9 controls its built-in encoder to the **motor-shaft RPM** setpoint; CAN 10 mirrors CAN 9 and CAN 12 mirrors it with inverted output. A remains feeder-only; A+B can run simultaneously.
-- Set `Shooter > Shooter RPM Setpoint` above 0 before B will spin. It starts at **0 RPM (disarmed)** after deploying the new code. Invalid/nonfinite targets and targets above `MAX_TARGET_RPM = 4500` are rejected. Setpoint is RPM, **not output percent**; the old `Shooter Output (%)` slider is no longer read by code.
-- REVLib 2026 SPARK velocity loop: `kP=0.0001, kI=0, kD=0`, `kV = 12 / 5676` **volts per motor RPM** (provisional, must be tuned from data), `voltageCompensation(12.0)`, with independent **20 A per motor** current limits unchanged. The voltage compensation cannot create voltage above the available battery voltage.
-- `Shooter > Shooter Actual RPM`, `Shooter Command RPM`, `Shooter RPM Error`, `Shooter Applied (%)` and `Mechanism Diagnostics` individual shooter currents and CAN 9 voltage provide diagnostics for tuning. During physical commissioning use low RPM first with the mechanism cleared, and validate motor direction, actual speed and current with adult/mentor supervision.
-- PathPlanner `Auto Shooter Start` uses the same closed-loop RPM target and stores a snapshot of the target for safety. `Auto Shoot` still requires stable robot pose, valid hood, RPM readiness and explicit autonomous feeder arming; an RPM target of zero blocks shooting.
+- Hold B to spin the shooter at the selected **Shooter Output (%)**. Release B to stop. This directly sets SPARK MAX motor duty cycle, **not a velocity PID/RPM setpoint**.
+- Default output is 50% after deployment; adjustable range 0–75%, matching the earlier percent-output branch. The slider alone never starts the motors.
+- CAN 9 leads, CAN 10 follows in phase, and CAN 12 follows inverted, with the original negative shooting direction. The current branch's 40 A per-motor current limits remain unchanged.
+- Encoder RPM is read-only and can be used to check spin-up stability for autonomous feeding; it never controls flywheel output.
+- PathPlanner `Auto Shooter Start` uses the selected output percentage; `Auto Shoot` continues requiring a stopped chassis, ready hood, stable shooter, and separate autonomous feeder enable.
+- Saved Shuffleboard client layouts may still show obsolete `Shooter RPM Setpoint` / `Shooter Command RPM` tiles, which are no longer used.
 
 ## PathPlanner autos
 

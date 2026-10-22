@@ -408,3 +408,16 @@ the previously observed ~0.225 m discrepancy in reconstructed tag height,
 validate the measured bearing and distance on the real HUB, and plan a
 supervised low-speed safety trial. Old V2 remains as telemetry/reference only.
 Cleanup of old files is intentionally deferred until real V3 validation.
+
+## Shooter percent-output restoration (2026-10-23)
+
+From the former `intake-subsystem` and `vscode-local-20261022` branches,
+restore **direct duty-cycle shooter control**: the `Shooter Output (%)`
+slider defaults to 50% and allows 0–75%, B held runs shooter CAN9
+with followers 10 and 12, releasing B stops it. No target RPM or
+closed-loop shooter velocity control is used. The current branch's
+40 A current limits are preserved. `Auto Shooter Start` retains
+the selected percentage, and `Auto Shoot` uses encoder spin-up
+stability for feeding safeguards, not RPM-based flywheel control.
+Old locally cached RPM widgets are unused and may remain until the
+operator deletes them from saved Shuffleboard layouts.
