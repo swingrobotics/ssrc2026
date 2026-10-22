@@ -41,10 +41,8 @@ public class IntakeSubsystem extends SubsystemBase {
     intakeTab.addDouble("Intake Output (%)", () -> commandedOutput * 100.0);
     intakeTab.addDouble("Left Motor CAN ID", () -> IntakeConstants.LEFT_CAN_ID);
     intakeTab.addDouble("Right Motor CAN ID", () -> IntakeConstants.RIGHT_CAN_ID);
-    intakeTab.addDouble("Left Motor Current (A)",
-        () -> configured ? leftMotor.getOutputCurrent() : 0.0);
-    intakeTab.addDouble("Right Motor Current (A)",
-        () -> configured ? rightMotor.getOutputCurrent() : 0.0);
+    intakeTab.addDouble("Left Motor Current (A)", this::getLeftMotorCurrent);
+    intakeTab.addDouble("Right Motor Current (A)", this::getRightMotorCurrent);
 
     if (!configured) {
       // Do not construct Spark MAX objects with placeholders or duplicate IDs.
@@ -84,6 +82,14 @@ public class IntakeSubsystem extends SubsystemBase {
 
   public boolean isConfigured() {
     return configured;
+  }
+
+  private double getLeftMotorCurrent() {
+    return leftMotor == null ? 0.0 : leftMotor.getOutputCurrent();
+  }
+
+  private double getRightMotorCurrent() {
+    return rightMotor == null ? 0.0 : rightMotor.getOutputCurrent();
   }
 
   /**
