@@ -127,9 +127,9 @@ public final class Constants {
     public static final int RIGHT_CAN_ID = 17;
 
     // Conservative first-power-on limits; tune only after confirming roller direction.
-    public static final int CURRENT_LIMIT_AMPS = 20;
-    public static final double MAX_OUTPUT = 0.25;
-    public static final double DEFAULT_OUTPUT = 0.20;
+    public static final int CURRENT_LIMIT_AMPS = 40;
+    public static final double MAX_OUTPUT = 0.55;
+    public static final double DEFAULT_OUTPUT = 0.50;
   }
 
   /**
@@ -142,10 +142,10 @@ public final class Constants {
    */
   public static final class IntakeArmConstants {
     public static final int MOTOR_CAN_ID = 15; // TODO: actual unique CAN ID (15-62).
-    public static final double MOTOR_DIRECTION = 1.0; // Verify physical direction.
-    public static final int CURRENT_LIMIT_AMPS = 10;
-    public static final double DEFAULT_OUTPUT = 0.08;
-    public static final double MAX_OUTPUT = 0.10;
+    public static final double MOTOR_DIRECTION = -1.0; // Verify physical direction.
+    public static final int CURRENT_LIMIT_AMPS = 40;
+    public static final double DEFAULT_OUTPUT = 0.15;
+    public static final double MAX_OUTPUT = 0.20;
     public static final double MAX_CONTINUOUS_RUN_SECONDS = 1.5;
   }
 
