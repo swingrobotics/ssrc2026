@@ -55,6 +55,8 @@ import java.util.Optional;
  */
 public class RobotContainer {
   private static final double kDefaultDrivePercent = 100.0;
+  private static final double kV3TrialMaxTurn = 0.08;
+  private static final double kV3TrialMaxTranslate = 0.20;
 
   // Measured chassis speed thresholds for a stationary autonomous shot.
   // These are provisional, conservative starting values to validate on robot.
@@ -108,6 +110,7 @@ public class RobotContainer {
   private final GenericEntry m_fieldVerifiedEntry;
   private final GenericEntry m_directHubGeometryEntry;
   private final GenericEntry m_hubAimTrimEntry;
+  private final GenericEntry m_v3TrialArmEntry;
   // Preview-only distance-to-hood calibration; these do not command motors.
   private final GenericEntry m_hoodNearDistanceEntry;
   private final GenericEntry m_hoodNearEncoderEntry;
@@ -345,6 +348,12 @@ public class RobotContainer {
     visionTab.addString("HUB Aim Source", m_hubCenterAlign::getSource);
     // Read-only V3 numbers have their OWN tab, separate from V2 diagnostics.
     ShuffleboardTab hubV3Tab = Shuffleboard.getTab("HUB V3");
+    m_v3TrialArmEntry = hubV3Tab.add("V3 Low-Speed Test Arm", false)
+        .withWidget(BuiltInWidgets.kToggleButton).withPosition(0, 5)
+        .withSize(4, 1).getEntry();
+    m_v3TrialArmEntry.setBoolean(false);
+    hubV3Tab.addString("V3 Test Blocker", this::getHubRotationBlocker)
+        .withPosition(0, 6).withSize(8, 1);
     hubV3Tab.addString("V3 Tracking State",
         () -> m_hubTrackerV3.getStatus(Timer.getFPGATimestamp()))
         .withPosition(0, 0).withSize(4, 1);
@@ -387,7 +396,7 @@ public class RobotContainer {
         () -> m_directHubGeometryEntry.getBoolean(false))
         .withPosition(4, 3).withSize(2, 1);
     hubV3Tab.addBoolean("V3 Auto Turn Armed",
-        () -> Constants.HubAimSafety.ENABLE_AUTO_ROTATION)
+        () -> m_v3TrialArmEntry.getBoolean(false))
         .withPosition(6, 3).withSize(2, 1);
     hubV3Tab.addString("V3 Last Rejection", m_hubTrackerV3::getLastRejection)
         .withPosition(0, 4).withSize(6, 1);
@@ -520,9 +529,10 @@ public class RobotContainer {
                 return;
               }
               double scale = getOutputScale(m_driveSpeedEntry, kDefaultDrivePercent);
+              double translationScale = isV3TrialActive() ? Math.min(scale, kV3TrialMaxTranslate) : scale;
               m_robotDrive.drive(
-                  -scale * MathUtil.applyDeadband(m_driverController.getLeftY(), OIConstants.kDriveDeadband),
-                  -scale * MathUtil.applyDeadband(m_driverController.getLeftX(), OIConstants.kDriveDeadband),
+                  -translationScale * MathUtil.applyDeadband(m_driverController.getLeftY(), OIConstants.kDriveDeadband),
+                  -translationScale * MathUtil.applyDeadband(m_driverController.getLeftX(), OIConstants.kDriveDeadband),
                   scale * getDriveRotationCommand(),
                   m_fieldRelativeEnabled);
             },
@@ -1012,51 +1022,48 @@ public class RobotContainer {
 
 
 
-  /**
-   * First unmet condition of the ACTIVE V3-only motion chain.
-   * No global-field pose or V2 fallback is permitted to turn the chassis.
-   */
-  private String getHubRotationBlocker() {
-    if (!DriverStation.isTeleopEnabled()) return "TELEOP NOT ENABLED";
-    if (!m_visionAlignEnabled) return "X: HUB AIM OFF";
-    if (!Constants.HubAimSafety.ENABLE_AUTO_ROTATION)
-      return "AUTO ROTATION CODE-LOCKED: VERIFY CAMERA GEOMETRY FIRST";
-    if (!m_robotDrive.isGyroReady()) return "NAVX NOT READY";
-    if (!m_directHubGeometryEntry.getBoolean(false))
-      return "CAMERA GEOMETRY NOT VERIFIED";
-    if (!m_hubTrackerV3.hasLock(Timer.getFPGATimestamp()))
-      return "NO V3 HUB LOCK: " + m_hubTrackerV3.getStatus(Timer.getFPGATimestamp());
-    return m_hubCenterAlign.isAligned() ? "V3 HUB ALIGNED"
-        : "V3 TARGET: " + m_hubTrackerV3.getStatus(Timer.getFPGATimestamp());
+
+  private boolean isV3TrialActive() {
+    return DriverStation.isTeleopEnabled() && m_visionAlignEnabled
+        && m_v3TrialArmEntry.getBoolean(false);
   }
 
-  /** Recompute direction to the SAME odometry-fixed HUB on every drive loop. */
+  static double capV3TrialTurn(double value) {
+    return Double.isFinite(value) ? MathUtil.clamp(value,
+        -kV3TrialMaxTurn, kV3TrialMaxTurn) : 0.0;
+  }
+
+  private String getHubRotationBlocker() {
+    if (!DriverStation.isTeleopEnabled()) return "TELEOP NOT ENABLED";
+    if (!m_v3TrialArmEntry.getBoolean(false)) return "ARM V3 TEST FIRST";
+    if (!m_visionAlignEnabled) return "PRESS X TO AIM";
+    if (!m_robotDrive.isGyroReady()) return "NAVX NOT READY";
+    if (!m_hubTrackerV3.hasLiveTag(Timer.getFPGATimestamp()))
+      return "NO FRESH HUB TAG: TURN STOPPED";
+    return "V3 LOW-SPEED TRACKING";
+  }
+
   private double getDriveRotationCommand() {
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     if (!m_visionAlignEnabled) {
       m_lastHubTurnOutput = 0.0;
       return getTriggerRotation();
     }
-    // The prior ~0.225 m camera-height disagreement has NOT been resolved.
-    // Keep this code-level interlock false pending physical V3 validation.
-    if (!Constants.HubAimSafety.ENABLE_AUTO_ROTATION
-        || !m_directHubGeometryEntry.getBoolean(false)
-        || !m_robotDrive.isGyroReady()) {
-      m_lastHubTurnOutput = 0.0;
-      return 0.0;
-    }
-    Optional<Translation2d> fixedHub = m_hubTrackerV3.getHubInOdometry(
-        Timer.getFPGATimestamp());
-    if (fixedHub.isEmpty()) {
+    if (!isV3TrialActive() || !m_robotDrive.isGyroReady()
+        || !m_hubTrackerV3.hasLiveTag(Timer.getFPGATimestamp())) {
       m_hubCenterAlign.stop();
       m_lastHubTurnOutput = 0.0;
       return 0.0;
     }
-    m_lastHubTurnOutput = m_hubCenterAlign.calculateDirectTurn(
-        m_robotDrive.getPose(),
-        m_robotDrive.getRobotRelativeSpeeds(),
-        fixedHub.orElseThrow(),
-        m_robotDrive.isGyroReady());
+    Optional<Translation2d> hub = m_hubTrackerV3.getHubInOdometry(
+        Timer.getFPGATimestamp());
+    if (hub.isEmpty()) {
+      m_lastHubTurnOutput = 0.0;
+      return 0.0;
+    }
+    m_lastHubTurnOutput = capV3TrialTurn(m_hubCenterAlign.calculateDirectTurn(
+        m_robotDrive.getPose(), m_robotDrive.getRobotRelativeSpeeds(),
+        hub.orElseThrow(), m_robotDrive.isGyroReady()));
     return m_lastHubTurnOutput;
   }
 
@@ -1067,6 +1074,11 @@ public class RobotContainer {
 
   /** Toggle PhotonVision AprilTag auto-alignment on/off. */
   private void toggleVisionAlign() {
+    if (!DriverStation.isTeleopEnabled() || !m_v3TrialArmEntry.getBoolean(false)) {
+      m_visionAlignEnabled = false;
+      m_hubCenterAlign.stop();
+      return;
+    }
     m_visionAlignEnabled = !m_visionAlignEnabled;
     if (m_visionAlignEnabled) {
       m_hubCenterAlign.start();
@@ -1206,8 +1218,7 @@ public class RobotContainer {
    * certifying the camera, without changing any motor output/interlock.
    */
   private void updateHubAimPreview() {
-    if (Constants.HubAimSafety.ENABLE_AUTO_ROTATION
-        && DriverStation.isTeleopEnabled() && m_visionAlignEnabled) return;
+    if (isV3TrialActive()) return;
     if (!m_robotDrive.isGyroReady()) {
       m_hubCenterAlign.stop();
       return;
@@ -1275,6 +1286,14 @@ public class RobotContainer {
 
   /** Camera frames are read once per loop; Shuffleboard suppliers publish live values. */
   public void updateDashboard() {
+    if (!DriverStation.isTeleopEnabled()) {
+      m_v3TrialArmEntry.setBoolean(false);
+      m_visionAlignEnabled = false;
+      m_lastHubTurnOutput = 0.0;
+    } else if (!m_v3TrialArmEntry.getBoolean(false) && m_visionAlignEnabled) {
+      m_visionAlignEnabled = false;
+      m_lastHubTurnOutput = 0.0;
+    }
     // Keep trim preview and its settling reset current even while disabled.
     m_hubCenterAlign.setAimTrimDegrees(m_hubAimTrimEntry.getDouble(0.0));
     updateFeederDashboardTest();

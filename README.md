@@ -8,7 +8,7 @@ Active development branch: `hub-pose-fusion-2026`. Java/WPILib 2026 command-base
 | --- | --- |
 | Left stick | Robot-relative swerve translation by default |
 | Left/right triggers | Manual chassis rotation when HUB align is off |
-| X (press) | Toggle V3 odometry-fixed HUB-center tracking; auto rotation remains code-locked pending camera validation |
+| X (press) | With HUB V3 test armed in Teleop, toggle low-speed automatic HUB center rotation |
 | Y (press) | Toggle robot-relative / field-relative translation |
 | A (hold) | Feeder only, forward at Shooter > Feeder Speed (%); release stops feeder |
 | B (hold) | Shooter only, SPARK MAX Velocity PID at Shooter > Shooter RPM Setpoint; release stops shooter |
@@ -95,7 +95,7 @@ This project was originally based on REV's MAXSwerve Java template. The original
 - New active `HubAimTrackerV3` uses the known tag mounting geometry to reconstruct the HUB center from one or more visible AprilTags, then stores it in the chassis local odometry frame at image capture time. Every drive/preview tick recomputes the robot-to-HUB bearing from updated odometry. When a tag reappears, the fixed point is corrected.
 - A missing tag can be bridged for **at most 0.80 s**; after that the target expires. Disagreeing tag fixes, target teleports, and odometry resets invalidate the target immediately.
 - The separate `HUB V3` Shuffleboard tab exposes target lock, tag freshness, local HUB X/Y, robot X/Y, bearing, distance, heading error and validation state. Heading previews are read-only even with `Hub Direct Geometry Verified` OFF.
-- **Auto rotation stays locked** via `HubAimSafety.ENABLE_AUTO_ROTATION=false` until the existing camera geometry disagreement is resolved and actual tests validate the target. This change does NOT shoot balls or change PathPlanner, drive/steer motors or their limits.
+- **Full-speed competition auto rotation stays locked** (`HubAimSafety.ENABLE_AUTO_ROTATION=false`). To test V3 turning at low speed, first enable Teleop, switch `HUB V3 > V3 Low-Speed Test Arm` ON, then press X once; press X again, switch Arm OFF, or Disable to stop. Trial yaw is capped at 0.08 normalized (~14.4 deg/s at 100% drive scaling), and translation while aiming is capped to 20%. No live tag within 0.25 s or navX not ready means zero automatic rotation. This does not alter shooter, feeder, hood, PathPlanner or motor current limits.
 - Old V2 and global pose code are retained for comparison and rollback; delete/consolidate them **only after V3 is successfully verified on the actual robot**.
 
 ## HUB automatic aiming V2 (2026-10-23)
@@ -103,7 +103,6 @@ This project was originally based on REV's MAXSwerve Java template. The original
 The earlier classes were `HubAimTargetV2` and `HubAimHeadingV2`. V2 target is now a reference/diagnostic only, and the generic `HubAimHeadingV2` heading PID is reused by the V3 target.
 They reconstruct the HUB center using individual AprilTag 3D SolvePnP estimates, verify the data, reject conflicting targets, and calculate wrapped heading with a profiled controller. Legacy classes remain source-only to avoid losing work.
 
-**Current safety interlock:** `Constants.HubAimSafety.ENABLE_AUTO_ROTATION = false`.
-Pressing X may request aiming but cannot produce automatic rotation until the camera geometry is validated. Diagnostic heading previews are available in the Vision tab after camera geometry is independently verified. The switch is deliberately not editable in Shuffleboard.
+**Safety:** Full-speed automatic rotation remains disabled through `ENABLE_AUTO_ROTATION=false`. V3 low-speed testing has its own explicit Teleop dashboard arming switch. `HUB V3 > V3 Low-Speed Test Arm` defaults OFF on deploy and resets OFF whenever Disabled. Press X once to begin slow yaw toward the stored HUB center, X again to stop. If target detections go stale (more than 0.25 s), V3 returns zero automatic turn. The physical camera geometry discrepancy is not considered fixed.
 
 Before considering enabling rotation: fix and validate all four modules and the navX; calibrate/check PhotonVision intrinsics and camera-to-robot 3D pose; check official HUB tag layout, target heading and observed distance with the robot Disabled; inspect X-button and telemetry status. Unit tests are not a physical drivetrain test.
