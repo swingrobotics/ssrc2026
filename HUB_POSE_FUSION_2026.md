@@ -5,6 +5,72 @@ Branch: `hub-pose-fusion-2026` based on `intake-subsystem`
 The parent branch is unchanged. Development does NOT mean this is
 calibrated or proven accurate on a real robot.
 
+## Current HUB aiming — 2026-10-22 update
+
+**Direct aiming is now the primary Teleop X-button target.** This follows
+[FRC 4107's PhotonVisionSystem](https://github.com/Storm4107/2026-Rebuilt/blob/main/src/main/java/frc/robot/vision/PhotonVisionSystem.java)
+instead of requiring global field coordinates.
+
+The processing chain for **one or more** visible HUB tags is:
+
+1. PhotonVision 3-D `bestCameraToTarget` for each visible official HUB ID.
+   MultiTag solution is NOT required. Known alliance comes from Driver Station;
+   when unavailable, choose the color of the strongest valid HUB observation.
+2. WPILib's 2026 Welded AprilTag tag Pose3d and the per-alliance HUB center
+   provide a unique 3-D **tag-to-HUB-center** Transform3d for every tag ID.
+3. `HubRelativeTarget` chains robot-to-camera, camera-to-tag, tag-to-HUB.
+   It calculates the horizontal center relative to the robot, not the tag yaw.
+4. Odometry pose is sampled at the camera image timestamp via
+   `TimeInterpolatableBuffer<Pose2d>`; HUB coordinates are expressed in
+   the *local* odometry frame, including latency compensation. **No initial
+   global field pose is needed to aim while the HUB is visible.**
+5. Individual single-tag observations with bad ambiguity/range are rejected.
+   When two or more tags are visible, a spatial-consensus filter rejects
+   inconsistent centers before weighting and smoothing valid estimates.
+6. Teleop X toggles direct HUB yaw control using the existing profiled PID;
+   the left stick keeps driving. If direct target disappears, a globally
+   initialized, recently fused pose may serve as a secondary fallback.
+   When neither is trustworthy, the rotation command is zero.
+
+PhotonVision `Output` requirements: calibrate the camera with correct
+resolution, enable 3-D, and when `Do Multi-Target Estimation` is active also
+enable **`Always Do Single-Target Estimation`**. Without the latter,
+`getBestCameraToTarget()` can be zero even when two or three tags are visible.
+The local direct path needs usable individual SolvePnP transforms (not merely
+2-D target boxes or the camera's MultiTag pose).
+
+### First robot test of DIRECT aiming (practice HUB allowed)
+
+1. Check `ROBOT_TO_CAMERA` XYZ and pitch/yaw/roll against the actual install.
+   Ensure official HUB tags are physically mounted in their documented
+   locations/orientations. If the rig uses different tag placements, change
+   the tag-to-HUB model instead of falsifying a field pose.
+2. In PhotonVision, turn on **Always Do Single-Target Estimation** along
+   with 3-D and camera calibration, then confirm `bestCameraToTarget` is
+   nonzero; `Pose Solver=SingleTag` is now perfectly acceptable.
+3. In Shuffleboard **Vision**, set `Hub Direct Geometry Verified` true
+   *after checking the real geometry*. **Do not** need `Reset Pose (Disabled)`,
+   `Pose Initialized=true` or `Field Camera Verified=true` for local direct.
+4. Check `HUB Direct Status = DIRECT HUB TARGET VALID: 1 TAG(S)` (or more),
+   `HUB Direct Fresh=true`, and recognized `HUB Direct Best Tag ID`.
+5. Enable TELEOP, press X once with the drivetrain safely controlled and
+   first test rotation direction at a conservative speed. When aiming,
+   `HUB Aim Source = DIRECT TAG 3D`.
+6. When no usable individual 3-D transform exists, the direct status gives
+   `NO VALID HUB 3D TAG: ENABLE ALWAYS DO SINGLE-TARGET ESTIMATION`.
+   Other reasons include stale timestamps and inconsistent hub measurements.
+7. To use field-relative fallback, additionally perform the original global
+   calibration, multi-tag pose initialization and `Fusion Enabled` steps.
+   A global pose still requires matching the actual field JSON. A separate
+   practice HUB with official tag geometry can work via direct path without
+   an official full-field layout.
+
+Safety notes: Rejecting uncalibrated geometry is intentional. The robot
+remains untested with real motors. No projectile-flight lead, automatic hood
+angle, automatic shooter percentage or moving-shot compensation was added.
+All original driver A/B/Y/bumper, feeder/hood/intake, PathPlanner controls
+remain unchanged.
+
 ## Architecture
 
 1. PhotonVision `PC_Camera` reports calibrated 2026 **Welded** field poses.
