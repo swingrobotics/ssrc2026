@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.geometry.Pose3d;
 import edu.wpi.first.math.geometry.Rotation3d;
 import edu.wpi.first.math.geometry.Transform3d;
@@ -89,7 +90,7 @@ class HubRelativeTargetTest {
         cameraField, VisionConstants.FIELD_LAYOUT.getTagPose(id).orElseThrow());
     return new PhotonTrackedTarget(
         0.0, 0.0, 0.0, 0.0,
-        id, -1, 0.0, cameraToTag, Transform3d.kZero, 0.05,
+        id, -1, 0.0f, cameraToTag, Transform3d.kZero, 0.05,
         new ArrayList<>(), new ArrayList<>());
   }
 
@@ -125,7 +126,7 @@ class HubRelativeTargetTest {
             new Translation3d(1.2, 0, 0)),
         bad.getBestCameraToTarget().getRotation());
     var corrupted = new PhotonTrackedTarget(
-        0, 0, 0, 0, 20, -1, 0, wrongTransform, Transform3d.kZero, 0.05,
+        0, 0, 0, 0, 20, -1, 0.0f, wrongTransform, Transform3d.kZero, 0.05,
         new ArrayList<>(), new ArrayList<>());
 
     var tracker = new HubRelativeTarget(VisionConstants.FIELD_LAYOUT);
