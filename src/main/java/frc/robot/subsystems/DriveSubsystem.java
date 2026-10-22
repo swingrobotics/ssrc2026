@@ -95,11 +95,11 @@ public class DriveSubsystem extends SubsystemBase {
   public DriveSubsystem() {
     HAL.report(tResourceType.kResourceType_RobotDrive, tInstances.kRobotDriveSwerve_MaxSwerve);
     ShuffleboardTab driveTab = Shuffleboard.getTab("Drive");
-    driveTab.add("Field", m_field);
-    driveTab.addDouble("Pose X (m)", () -> getPose().getX());
-    driveTab.addDouble("Pose Y (m)", () -> getPose().getY());
-    driveTab.addDouble("Pose Heading (deg)", () -> getPose().getRotation().getDegrees());
-    driveTab.addBoolean("PathPlanner Ready", () -> m_pathPlannerConfigured);
+    driveTab.add("Field", m_field).withPosition(0, 1).withSize(6, 4);
+    driveTab.addDouble("Pose X (m)", () -> getPose().getX()).withPosition(6, 1);
+    driveTab.addDouble("Pose Y (m)", () -> getPose().getY()).withPosition(6, 2);
+    driveTab.addDouble("Pose Heading (deg)", () -> getPose().getRotation().getDegrees())
+        .withPosition(6, 3);
 
     ShuffleboardTab visionDiagnostics = Shuffleboard.getTab("Vision Diagnostics");
     visionDiagnostics.addDouble("Latest Fused Vision Age (s)", this::getLastAcceptedVisionAgeSeconds);
@@ -122,6 +122,7 @@ public class DriveSubsystem extends SubsystemBase {
     debug.addDouble("Robot Angular Velocity",
         () -> Math.toDegrees(getRobotRelativeSpeeds().omegaRadiansPerSecond));
     ShuffleboardTab pathDebug = Shuffleboard.getTab("PathPlanner Diagnostics");
+    pathDebug.addBoolean("PathPlanner Ready", () -> m_pathPlannerConfigured);
     pathDebug.addBoolean("Autonomous Enabled", DriverStation::isAutonomousEnabled);
     pathDebug.addBoolean("PP Target Valid", () -> m_pathPlannerTargetValid);
     pathDebug.addDouble("PP Target X", () -> m_pathPlannerTargetPose.getX());

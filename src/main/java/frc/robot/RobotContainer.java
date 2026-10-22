@@ -163,33 +163,47 @@ public class RobotContainer {
     ShuffleboardTab driveTab = Shuffleboard.getTab("Drive");
     m_driveSpeedEntry = driveTab.add("Drive Speed (%)", kDefaultDrivePercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
-    driveTab.addBoolean("Field Relative", () -> m_fieldRelativeEnabled);
-    driveTab.addBoolean("Hub Center Align", () -> m_visionAlignEnabled);
+        .withProperties(Map.of("min", 0.0, "max", 100.0))
+        .withPosition(0, 0).withSize(2, 1).getEntry();
+    driveTab.addBoolean("Field Relative", () -> m_fieldRelativeEnabled)
+        .withPosition(2, 0);
+    driveTab.addBoolean("Hub Center Align", () -> m_visionAlignEnabled)
+        .withPosition(3, 0);
 
     // Motor duty-cycle controls belong with mechanism telemetry, not driving.
     ShuffleboardTab shooterTab = Shuffleboard.getTab("Shooter");
     m_shooterSpeedEntry = shooterTab.add("Shooter Output (%)", kDefaultShooterPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0,
-            "max", ShooterConstants.MAX_MOTOR_OUTPUT * 100.0)).getEntry();
+            "max", ShooterConstants.MAX_MOTOR_OUTPUT * 100.0))
+        .withPosition(0, 0).withSize(3, 1).getEntry();
     m_feederSpeedEntry = shooterTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
+        .withProperties(Map.of("min", 0.0, "max", 100.0))
+        .withPosition(3, 0).withSize(3, 1).getEntry();
     // A target RPM must be calibrated from the actual shaft encoder at the
     // selected shooter duty cycle. Zero allows reverse only (never forward).
-    m_shooterTargetRpmEntry = shooterTab.add("Shooter Target RPM (calibrate)", 0.0).getEntry();
+    m_shooterTargetRpmEntry = shooterTab.add("Shooter Target RPM (calibrate)", 0.0)
+        .withPosition(0, 1).withSize(2, 1).getEntry();
     m_shooterRpmToleranceEntry = shooterTab.add("Feed RPM Tolerance", 150.0)
         .withWidget(BuiltInWidgets.kNumberSlider)
-        .withProperties(Map.of("min", 25.0, "max", 500.0)).getEntry();
-    shooterTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM);
+        .withProperties(Map.of("min", 25.0, "max", 500.0))
+        .withPosition(2, 1).withSize(2, 1).getEntry();
+    shooterTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM)
+        .withPosition(4, 1).withSize(2, 1);
     shooterTab.addBoolean("Shooter At Target RPM",
-        () -> m_shooter.isAtTargetRPM(getShooterTargetRPM(), getShooterRpmTolerance()));
-    shooterTab.addString("Feeder Direction", () -> m_feeder.getDirection());
-    shooterTab.addBoolean("Driver B Pressed", m_driverController::getBButton);
-    shooterTab.addBoolean("Teleop Enabled", DriverStation::isTeleopEnabled);
-    shooterTab.addBoolean("B Shoot Command Active", () -> m_teleopShootCommandActive);
-    shooterTab.addString("Shooter Feeder Status", this::getTeleopShooterFeederStatus);
+        () -> m_shooter.isAtTargetRPM(getShooterTargetRPM(), getShooterRpmTolerance()))
+        .withPosition(6, 1).withSize(2, 1);
+    shooterTab.addString("Feeder Direction", m_feeder::getDirection)
+        .withPosition(6, 0).withSize(2, 1);
+    shooterTab.addString("Shooter Feeder Status", this::getTeleopShooterFeederStatus)
+        .withPosition(0, 3).withSize(6, 1);
+
+    // Button/robot state troubleshooting is separated from operator controls.
+    ShuffleboardTab mechanismDebug = Shuffleboard.getTab("Mechanism Diagnostics");
+    mechanismDebug.addBoolean("Driver B Pressed", m_driverController::getBButton);
+    mechanismDebug.addBoolean("Teleop Enabled", DriverStation::isTeleopEnabled);
+    mechanismDebug.addBoolean("B Shoot Command Active", () -> m_teleopShootCommandActive);
 
     // No automatic RPM motor control; only the feeder uses measured RPM.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
@@ -247,10 +261,10 @@ public class RobotContainer {
     visionDebugTab.addDouble("Camera Mount Tag Z (m)",
         () -> Double.isFinite(m_cameraTagHeightRobotMeters)
             ? m_cameraTagHeightRobotMeters : -999.0);
-    visionTab.addDouble("Camera Mount Tag Height Error (m)",
+    visionDebugTab.addDouble("Camera Mount Tag Height Error (m)",
         () -> Double.isFinite(m_cameraTagHeightErrorMeters)
             ? m_cameraTagHeightErrorMeters : -999.0);
-    visionTab.addString("Camera Mount Check Status",
+    visionDebugTab.addString("Camera Mount Check Status",
         () -> m_cameraMountCheckStatus);
     visionDebugTab.addDouble("Vision/Fused Delta XY (m)",
         () -> m_lastVisionInnovationMeters);
@@ -268,12 +282,12 @@ public class RobotContainer {
         () -> DriverStation.getAlliance().map(Enum::name).orElse("UNKNOWN"));
     visionTab.addString("HUB Align Status", m_hubCenterAlign::getStatus);
     visionTab.addString("HUB Aim Source", m_hubCenterAlign::getSource);
-    visionTab.addString("HUB Direct Status", m_hubRelativeTarget::getStatus);
+    visionDebugTab.addString("HUB Direct Status", m_hubRelativeTarget::getStatus);
     visionTab.addBoolean("HUB Direct Fresh",
         () -> m_hubRelativeTarget.isFresh(Timer.getFPGATimestamp()));
-    visionTab.addDouble("HUB Direct Tag Count",
+    visionDebugTab.addDouble("HUB Direct Tag Count",
         m_hubRelativeTarget::getLastTagCount);
-    visionTab.addDouble("HUB Direct Best Tag ID",
+    visionDebugTab.addDouble("HUB Direct Best Tag ID",
         m_hubRelativeTarget::getLastHubTagId);
     visionDebugTab.addString("HUB Direct Tag Alliance",
         m_hubRelativeTarget::getTargetAlliance);
@@ -321,11 +335,13 @@ public class RobotContainer {
       autoChooser.setDefaultOption("None", Commands.none());
     }
     m_autoChooser = autoChooser;
-    driveTab.add("Auto Chooser", m_autoChooser);
-    driveTab.addString("Selected Auto", () -> {
+    // Autonomous controls belong with their existing feeder arm/timer widgets.
+    shotTab.add("Auto Chooser", m_autoChooser)
+        .withPosition(0, 0).withSize(3, 1);
+    shotTab.addString("Selected Auto", () -> {
       Command chosen = m_autoChooser.getSelected();
       return chosen != null ? chosen.getName() : "None";
-    });
+    }).withPosition(3, 0).withSize(2, 1);
 
     m_robotDrive.setDefaultCommand(
         new RunCommand(

@@ -38,9 +38,11 @@ public class FeederSubsystem extends SubsystemBase {
 
     stopFeeder();
     ShuffleboardTab shooterTab = Shuffleboard.getTab("Shooter");
-    shooterTab.addBoolean("Feeder Enabled", DriverStation::isEnabled);
-    shooterTab.addBoolean("Feeder Command Active", this::isFeeding);
-    shooterTab.addDouble("Feeder Command (%)", () -> commandedOutput * 100.0);
+    shooterTab.addDouble("Feeder Command (%)", () -> commandedOutput * 100.0)
+        .withPosition(2, 2).withSize(2, 1);
+    ShuffleboardTab debugTab = Shuffleboard.getTab("Mechanism Diagnostics");
+    debugTab.addBoolean("Feeder Enabled", DriverStation::isEnabled);
+    debugTab.addBoolean("Feeder Command Active", this::isFeeding);
   }
 
   public boolean isFeedAllowed() {

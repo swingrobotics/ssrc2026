@@ -37,12 +37,16 @@ public class IntakeSubsystem extends SubsystemBase {
         && isValidCanId(rightId)
         && leftId != rightId;
     ShuffleboardTab intakeTab = Shuffleboard.getTab("Intake");
-    intakeTab.addBoolean("Intake Configured", this::isConfigured);
-    intakeTab.addDouble("Intake Output (%)", () -> commandedOutput * 100.0);
-    intakeTab.addDouble("Left Motor CAN ID", () -> IntakeConstants.LEFT_CAN_ID);
-    intakeTab.addDouble("Right Motor CAN ID", () -> IntakeConstants.RIGHT_CAN_ID);
-    intakeTab.addDouble("Left Motor Current (A)", this::getLeftMotorCurrent);
-    intakeTab.addDouble("Right Motor Current (A)", this::getRightMotorCurrent);
+    intakeTab.addBoolean("Intake Configured", this::isConfigured)
+        .withPosition(0, 0);
+    intakeTab.addDouble("Intake Output (%)", () -> commandedOutput * 100.0)
+        .withPosition(1, 0).withSize(2, 1);
+
+    ShuffleboardTab debugTab = Shuffleboard.getTab("Mechanism Diagnostics");
+    debugTab.addDouble("Left Intake CAN ID", () -> IntakeConstants.LEFT_CAN_ID);
+    debugTab.addDouble("Right Intake CAN ID", () -> IntakeConstants.RIGHT_CAN_ID);
+    debugTab.addDouble("Left Intake Current (A)", this::getLeftMotorCurrent);
+    debugTab.addDouble("Right Intake Current (A)", this::getRightMotorCurrent);
 
     if (!configured) {
       // Do not construct Spark MAX objects with placeholders or duplicate IDs.

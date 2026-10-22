@@ -62,14 +62,18 @@ public class IntakeArmSubsystem extends SubsystemBase {
       armMotor.stopMotor();
     }
 
-    ShuffleboardTab tab = Shuffleboard.getTab("Intake Arm");
-    tab.addBoolean("Configured", this::isConfigured);
-    tab.addDouble("Motor CAN ID", () -> IntakeArmConstants.MOTOR_CAN_ID);
-    tab.addDouble("Commanded Output (%)", () -> commandedOutput * 100.0);
-    tab.addDouble("Relative Motor Rotations", this::getMotorRotations);
-    tab.addDouble("Motor Current (A)", this::getMotorCurrent);
-    tab.addBoolean("Hold Timeout", () -> timedOut);
-    tab.addString("Status", this::getStatus);
+    // Intake arm and roller state share a single operator page.
+    ShuffleboardTab tab = Shuffleboard.getTab("Intake");
+    tab.addBoolean("Arm Configured", this::isConfigured).withPosition(3, 0);
+    tab.addDouble("Arm Output (%)", () -> commandedOutput * 100.0)
+        .withPosition(4, 0).withSize(2, 1);
+    tab.addBoolean("Arm Hold Timeout", () -> timedOut).withPosition(0, 1);
+    tab.addString("Arm Status", this::getStatus).withPosition(1, 1).withSize(5, 1);
+
+    ShuffleboardTab debugTab = Shuffleboard.getTab("Mechanism Diagnostics");
+    debugTab.addDouble("Arm CAN ID", () -> IntakeArmConstants.MOTOR_CAN_ID);
+    debugTab.addDouble("Arm Motor Rotations", this::getMotorRotations);
+    debugTab.addDouble("Arm Current (A)", this::getMotorCurrent);
   }
 
   public boolean isConfigured() {
