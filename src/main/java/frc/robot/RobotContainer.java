@@ -183,7 +183,7 @@ public class RobotContainer {
         .withPosition(3, 0).withSize(3, 1).getEntry();
     // A target RPM must be calibrated from the actual shaft encoder at the
     // selected shooter duty cycle. Zero allows reverse only (never forward).
-    m_shooterTargetRpmEntry = shooterTab.add("Shooter Target RPM (calibrate)", 0.0)
+    m_shooterTargetRpmEntry = shooterTab.add("Shooter Target RPM (calibrate)", 4000.0)
         .withPosition(0, 1).withSize(2, 1).getEntry();
     m_shooterRpmToleranceEntry = shooterTab.add("Feed RPM Tolerance", 150.0)
         .withWidget(BuiltInWidgets.kNumberSlider)

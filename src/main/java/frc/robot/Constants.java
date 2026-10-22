@@ -31,7 +31,7 @@ public final class Constants {
     // Driving Parameters - Note that these are not the maximum capable speeds of
     // the robot, rather the allowed maximum speeds
     //public static final double kMaxSpeedMetersPerSecond = 4.8;
-    public static final double kMaxSpeedMetersPerSecond = 1;  //위쪽 주석을 수정함
+    public static final double kMaxSpeedMetersPerSecond = 3;  //위쪽 주석을 수정함
     //public static final double kMaxAngularSpeed = 2 * Math.PI; // radians per second
     public static final double kMaxAngularSpeed = 1 * Math.PI; // radians per second  위쪽 주석을 수정함
 
@@ -128,8 +128,8 @@ public final class Constants {
 
     // Conservative first-power-on limits; tune only after confirming roller direction.
     public static final int CURRENT_LIMIT_AMPS = 40;
-    public static final double MAX_OUTPUT = 0.55;
-    public static final double DEFAULT_OUTPUT = 0.50;
+    public static final double MAX_OUTPUT = 1.00;
+    public static final double DEFAULT_OUTPUT = 0.85;
   }
 
   /**
@@ -169,7 +169,7 @@ public final class Constants {
   public static final class FeederConstants {
     public static final int FEEDER_11_ID = 11;
     public static final int FEEDER_14_ID = 14;
-    public static final double TEST_SPEED = 0.50;
+    public static final double TEST_SPEED = 0.70;
   }
 
   /** 2026 REBUILT official (Welded) field coordinate and camera mount. */
