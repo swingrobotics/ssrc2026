@@ -10,8 +10,9 @@ Active development branch: `hub-pose-fusion-2026`. Java/WPILib 2026 command-base
 | Left/right triggers | Manual chassis rotation when HUB align is off |
 | X (press) | Request HUB aiming; automatic chassis rotation stays locked while a swerve wheel is faulty |
 | Y (press) | Toggle robot-relative / field-relative translation |
-| A (hold) | Feeder only (forward; Shooter > Feeder Speed (%)); no shooter spin/RPM gate; release to stop. B wins if both held |
-| B (hold) | Original integrated shooter + RPM-gated feeder forward/reverse control |
+| A (hold) | Feeder only, forward at Shooter > Feeder Speed (%); release stops feeder |
+| B (hold) | Shooter only, at Shooter > Shooter Output (%); release stops shooter |
+| A + B (hold) | Independent feeder and shooter run together; either button can be released without stopping the other |
 | Left bumper (hold) | Intake rollers |
 | D-pad up/down (hold) | Intake arm forward/backward, limited runtime |
 | Right bumper (hold) | Swerve X-lock |

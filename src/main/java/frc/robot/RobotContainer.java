@@ -85,7 +85,6 @@ public class RobotContainer {
   private final GenericEntry m_feederSpeedEntry;
   private final GenericEntry m_shooterTargetRpmEntry;
   private final GenericEntry m_shooterRpmToleranceEntry;
-  private boolean m_teleopFeedForward = false;
   private boolean m_teleopShootCommandActive = false;
   private boolean m_manualFeederCommandActive = false;
   // Hood manual control remains independent until future measured calibration.
@@ -219,7 +218,8 @@ public class RobotContainer {
     mechanismDebug.addBoolean("B Shoot Command Active", () -> m_teleopShootCommandActive);
     mechanismDebug.addBoolean("A Feeder-Only Active", () -> m_manualFeederCommandActive);
 
-    // No automatic RPM motor control; only the feeder uses measured RPM.
+    // No automatic RPM motor control; teleop feeder on A is manual.
+    // The shooter RPM target is retained for autonomous shot safety checks.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
     m_autoFeederEnabledEntry = shotTab.add("Autonomous Feeder Enabled", false).getEntry();
     m_autoFeedDurationEntry = shotTab.add("Autonomous Feed Duration (s)", 0.75)
@@ -450,37 +450,21 @@ public class RobotContainer {
         ? MathUtil.clamp(tolerance, 1.0, 500.0) : 0.0;
   }
 
-  /** Explains why B is not driving the shooter/feeder during teleop. */
+  /** Describes the independent A feeder and B shooter teleop controls. */
   private String getTeleopShooterFeederStatus() {
-    if (!DriverStation.isTeleopEnabled()) {
-      return "BLOCKED: TELEOP NOT ENABLED";
-    }
-    if (!m_driverController.getBButton()) {
-      return "IDLE: HOLD B";
-    }
-    if (!m_teleopShootCommandActive) {
-      return "BLOCKED: B COMMAND NOT RUNNING";
-    }
-    if (!m_shooter.isRunning()) {
-      return "BLOCKED: SHOOTER OUTPUT IS ZERO";
-    }
-    if (getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent) <= 0.0) {
-      return "BLOCKED: FEEDER SPEED IS ZERO";
-    }
-    double rpm = m_shooter.getActualRPM();
-    if (!Double.isFinite(rpm) || rpm < 0.0) {
-      return "BLOCKED: SHOOTER RPM INVALID / DIRECTION";
-    }
-    double target = getShooterTargetRPM();
-    double tolerance = getShooterRpmTolerance();
-    if (!Double.isFinite(target) || tolerance <= 0.0
-        || (target > 0.0 && target <= 2.0 * tolerance)) {
-      return "BLOCKED: INVALID RPM TARGET / TOLERANCE";
-    }
-    if (target == 0.0) {
-      return "REVERSE ONLY: CALIBRATE TARGET RPM";
-    }
-    return "ACTIVE: " + m_feeder.getDirection();
+    if (!DriverStation.isTeleopEnabled()) return "BLOCKED: TELEOP NOT ENABLED";
+    boolean a = m_driverController.getAButton();
+    boolean b = m_driverController.getBButton();
+    if (!a && !b) return "IDLE: HOLD A FOR FEEDER, B FOR SHOOTER";
+    String shooter = b
+        ? (m_teleopShootCommandActive && m_shooter.isRunning()
+            ? "SHOOTER RUNNING" : "SHOOTER WAITING / ZERO OUTPUT")
+        : "SHOOTER OFF";
+    String feeder = a
+        ? (m_manualFeederCommandActive && m_feeder.isFeeding()
+            ? "FEEDER " + m_feeder.getDirection() : "FEEDER WAITING / ZERO OUTPUT")
+        : "FEEDER OFF";
+    return shooter + " | " + feeder;
   }
 
   /**
@@ -997,45 +981,24 @@ public class RobotContainer {
    * Use this method to define your button->command mappings.
    */
   private void configureButtonBindings() {
-    // B is the only teleop shooter/feeder button. Below target shaft RPM,
-    // back the feeder away from the shooter; at target, feed toward it.
-    // Button release or interruption stops BOTH mechanisms.
+    // B controls ONLY the shooter. Releasing B stops the shooter, not the feeder.
+    // This command requires only m_shooter, so A and B can operate together.
     new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
               m_teleopShootCommandActive = true;
               m_shooter.setOutputPercent(getShooterOutputPercent(m_shooterSpeedEntry));
-              ShooterFeedController.Direction direction = ShooterFeedController.select(
-                  DriverStation.isTeleopEnabled() && m_shooter.isRunning(),
-                  m_shooter.getActualRPM(),
-                  getShooterTargetRPM(),
-                  getShooterRpmTolerance(),
-                  m_teleopFeedForward);
-              double feederOutput =
-                  getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent);
-              if (direction == ShooterFeedController.Direction.FORWARD) {
-                m_feeder.runFeeder(feederOutput);
-              } else if (direction == ShooterFeedController.Direction.REVERSE) {
-                m_feeder.runFeeder(-feederOutput);
-              } else {
-                m_feeder.stopFeeder();
-              }
-              m_teleopFeedForward = direction == ShooterFeedController.Direction.FORWARD;
             },
             () -> {
-              m_feeder.stopFeeder();
               m_shooter.stopShooter();
-              m_teleopFeedForward = false;
               m_teleopShootCommandActive = false;
             },
-            m_shooter, m_feeder));
+            m_shooter));
 
-    // Hold A to run ONLY the feeder forward; the shooter remains independent.
-    // B takes priority if pressed simultaneously: this gate falls false before
-    // the A command can interrupt the B shooter+feeder command.
-    // Independent manual feeding bypasses the shooter's RPM readiness gate.
+    // A controls ONLY forward feeder output, independent of B and shooter RPM.
+    // Releasing A stops the feeder, not the shooter.
     new Trigger(() -> DriverStation.isTeleopEnabled()
-        && m_driverController.getAButton() && !m_driverController.getBButton())
+        && m_driverController.getAButton())
         .whileTrue(Commands.runEnd(
             () -> {
               m_manualFeederCommandActive = true;
