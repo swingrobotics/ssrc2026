@@ -46,6 +46,7 @@ public final class HubCenterAlign {
   private double hubBearingDegrees = Double.NaN;
   private double hubDistanceMeters = Double.NaN;
   private String status = "OFF";
+  private String source = "NONE";
 
   public HubCenterAlign() {
     thetaController.enableContinuousInput(-Math.PI, Math.PI);
@@ -87,13 +88,15 @@ public final class HubCenterAlign {
   public void start() {
     controllerInitialized = false;
     stableSince = -1.0;
-    status = "WAITING FOR VERIFIED POSE";
+    status = "WAITING FOR HUB TAG OR VERIFIED FIELD POSE";
+    source = "NONE";
   }
 
   public void stop() {
     controllerInitialized = false;
     stableSince = -1.0;
     status = "OFF";
+    source = "NONE";
   }
 
   /**
@@ -121,31 +124,69 @@ public final class HubCenterAlign {
       return 0.0;
     }
 
-    Translation2d hub = hubForAlliance(alliance.get());
-    Translation2d launcherWorld = fusedPose.getTranslation().plus(
-        HubConstants.SHOOTER_OFFSET_ROBOT_METERS.rotateBy(fusedPose.getRotation()));
+    return calculateFacingTarget(
+        fusedPose, measuredChassisSpeeds, hubForAlliance(alliance.get()),
+        "FIELD FUSED");
+  }
+
+  /**
+   * FRC 4107 cameraToTag -> tagToHub targeting path.
+   * The robot pose and HUB coordinates are in the SAME local odometry frame,
+   * so no field pose initialization or external alliance is needed here.
+   */
+  public double calculateDirectTurn(
+      Pose2d localOdometryPose, ChassisSpeeds measuredChassisSpeeds,
+      Translation2d hubInLocalOdometry, boolean gyroReady) {
+    if (!gyroReady || localOdometryPose == null
+        || hubInLocalOdometry == null || measuredChassisSpeeds == null
+        || !Double.isFinite(localOdometryPose.getX())
+        || !Double.isFinite(localOdometryPose.getY())
+        || !Double.isFinite(localOdometryPose.getRotation().getRadians())
+        || !Double.isFinite(measuredChassisSpeeds.omegaRadiansPerSecond)) {
+      controllerInitialized = false;
+      stableSince = -1.0;
+      status = "STOP: DIRECT HUB POSE INVALID OR NAVX NOT READY";
+      source = "NONE";
+      return 0.0;
+    }
+    return calculateFacingTarget(
+        localOdometryPose, measuredChassisSpeeds, hubInLocalOdometry,
+        "DIRECT TAG 3D");
+  }
+
+  private double calculateFacingTarget(
+      Pose2d robotPose, ChassisSpeeds measuredChassisSpeeds,
+      Translation2d hub, String nextSource) {
+    if (!source.equals(nextSource)) {
+      controllerInitialized = false;
+      stableSince = -1.0;
+      source = nextSource;
+    }
+    Translation2d launcherWorld = robotPose.getTranslation().plus(
+        HubConstants.SHOOTER_OFFSET_ROBOT_METERS.rotateBy(robotPose.getRotation()));
     double dx = hub.getX() - launcherWorld.getX();
     double dy = hub.getY() - launcherWorld.getY();
     hubDistanceMeters = Math.hypot(dx, dy);
-    if (hubDistanceMeters <= MIN_HUB_DISTANCE_METERS) {
+    if (!Double.isFinite(hubDistanceMeters)
+        || hubDistanceMeters <= MIN_HUB_DISTANCE_METERS) {
       controllerInitialized = false;
       stableSince = -1.0;
-      status = "STOP: TOO CLOSE TO HUB";
+      status = "STOP: HUB TOO CLOSE OR INVALID";
       return 0.0;
     }
 
     Rotation2d desired = desiredHeading(
-        fusedPose, hub, HubConstants.SHOOTER_OFFSET_ROBOT_METERS,
+        robotPose, hub, HubConstants.SHOOTER_OFFSET_ROBOT_METERS,
         Rotation2d.fromDegrees(LAUNCHER_YAW_OFFSET_DEGREES), trimDegrees);
     Rotation2d untrimmed = desiredHeading(
-        fusedPose, hub, HubConstants.SHOOTER_OFFSET_ROBOT_METERS,
+        robotPose, hub, HubConstants.SHOOTER_OFFSET_ROBOT_METERS,
         Rotation2d.fromDegrees(LAUNCHER_YAW_OFFSET_DEGREES), 0.0);
-    double current = fusedPose.getRotation().getRadians();
+    double current = robotPose.getRotation().getRadians();
     double goal = desired.getRadians();
     double error = MathUtil.angleModulus(goal - current);
     headingErrorDegrees = Math.toDegrees(error);
-    untrimmedErrorDegrees = untrimmed.minus(fusedPose.getRotation()).getDegrees();
-    currentHeadingDegrees = fusedPose.getRotation().getDegrees();
+    untrimmedErrorDegrees = untrimmed.minus(robotPose.getRotation()).getDegrees();
+    currentHeadingDegrees = robotPose.getRotation().getDegrees();
     desiredHeadingDegrees = desired.getDegrees();
     hubBearingDegrees = Math.toDegrees(Math.atan2(dy, dx));
 
@@ -160,11 +201,8 @@ public final class HubCenterAlign {
 
     if (inTolerance) {
       if (stableSince < 0.0) stableSince = Timer.getFPGATimestamp();
-      status = (stableSince >= 0.0
-          && Timer.getFPGATimestamp() - stableSince >= STABLE_SECONDS)
-              ? "ALIGNED" : "SETTLING";
-      // PID goal is retained; zero velocity removes micro-oscillation when
-      // the robot has already settled.
+      status = Timer.getFPGATimestamp() - stableSince >= STABLE_SECONDS
+          ? "ALIGNED" : "SETTLING";
       return 0.0;
     }
 
@@ -185,6 +223,7 @@ public final class HubCenterAlign {
   }
 
   public String getStatus() { return status; }
+  public String getSource() { return source; }
   public double getAimTrimDegrees() { return trimDegrees; }
   public double getHeadingErrorDegrees() { return finiteOrInvalid(headingErrorDegrees); }
   public double getUntrimmedHeadingErrorDegrees() { return finiteOrInvalid(untrimmedErrorDegrees); }
