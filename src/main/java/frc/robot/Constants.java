@@ -128,8 +128,8 @@ public final class Constants {
 
     // Conservative first-power-on limits; tune only after confirming roller direction.
     public static final int CURRENT_LIMIT_AMPS = 40;
-    public static final double MAX_OUTPUT = 0.25;
-    public static final double DEFAULT_OUTPUT = 0.20;
+    public static final double MAX_OUTPUT = 0.55;
+    public static final double DEFAULT_OUTPUT = 0.50;
   }
 
   /**
