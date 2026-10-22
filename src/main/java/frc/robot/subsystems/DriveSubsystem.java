@@ -99,14 +99,14 @@ public class DriveSubsystem extends SubsystemBase {
     driveTab.addDouble("Pose X (m)", () -> getPose().getX());
     driveTab.addDouble("Pose Y (m)", () -> getPose().getY());
     driveTab.addDouble("Pose Heading (deg)", () -> getPose().getRotation().getDegrees());
-    driveTab.addBoolean("NavX Connected", m_gyro::isConnected);
-    driveTab.addBoolean("NavX Ready", this::isGyroReady);
-    driveTab.addBoolean("Field Pose Initialized", this::isFieldPoseInitialized);
-    driveTab.addDouble("Latest Fused Vision Age (s)", this::getLastAcceptedVisionAgeSeconds);
-    driveTab.addDouble("Fused Vision Count", () -> m_visionMeasurementsApplied);
     driveTab.addBoolean("PathPlanner Ready", () -> m_pathPlannerConfigured);
 
-    ShuffleboardTab debug = Shuffleboard.getTab("Debug");
+    ShuffleboardTab visionDiagnostics = Shuffleboard.getTab("Vision Diagnostics");
+    visionDiagnostics.addDouble("Latest Fused Vision Age (s)", this::getLastAcceptedVisionAgeSeconds);
+    visionDiagnostics.addDouble("Fused Vision Count", () -> m_visionMeasurementsApplied);
+
+    ShuffleboardTab debug = Shuffleboard.getTab("Drive Diagnostics");
+    debug.addBoolean("NavX Connected", m_gyro::isConnected);
     debug.addBoolean("NavX Calibrating", m_gyro::isCalibrating);
     debug.addDouble("NavX Heading", this::getHeading);
     debug.addDouble("NavX Turn Rate", this::getTurnRate);
@@ -121,16 +121,17 @@ public class DriveSubsystem extends SubsystemBase {
     debug.addDouble("Robot Velocity Y", () -> getRobotRelativeSpeeds().vyMetersPerSecond);
     debug.addDouble("Robot Angular Velocity",
         () -> Math.toDegrees(getRobotRelativeSpeeds().omegaRadiansPerSecond));
-    debug.addBoolean("Autonomous Enabled", DriverStation::isAutonomousEnabled);
-    debug.addBoolean("PP Target Valid", () -> m_pathPlannerTargetValid);
-    debug.addDouble("PP Target X", () -> m_pathPlannerTargetPose.getX());
-    debug.addDouble("PP Target Y", () -> m_pathPlannerTargetPose.getY());
-    debug.addDouble("PP Target Heading", () -> m_pathPlannerTargetPose.getRotation().getDegrees());
-    debug.addDouble("PP Current X", () -> m_pathPlannerCurrentPose.getX());
-    debug.addDouble("PP Current Y", () -> m_pathPlannerCurrentPose.getY());
-    debug.addDouble("PP Current Heading", () -> m_pathPlannerCurrentPose.getRotation().getDegrees());
-    debug.addDouble("PP Path Points", () -> m_pathPlannerPathPoints);
-    debug.addString("PP Active Path", () -> m_pathPlannerActivePath);
+    ShuffleboardTab pathDebug = Shuffleboard.getTab("PathPlanner Diagnostics");
+    pathDebug.addBoolean("Autonomous Enabled", DriverStation::isAutonomousEnabled);
+    pathDebug.addBoolean("PP Target Valid", () -> m_pathPlannerTargetValid);
+    pathDebug.addDouble("PP Target X", () -> m_pathPlannerTargetPose.getX());
+    pathDebug.addDouble("PP Target Y", () -> m_pathPlannerTargetPose.getY());
+    pathDebug.addDouble("PP Target Heading", () -> m_pathPlannerTargetPose.getRotation().getDegrees());
+    pathDebug.addDouble("PP Current X", () -> m_pathPlannerCurrentPose.getX());
+    pathDebug.addDouble("PP Current Y", () -> m_pathPlannerCurrentPose.getY());
+    pathDebug.addDouble("PP Current Heading", () -> m_pathPlannerCurrentPose.getRotation().getDegrees());
+    pathDebug.addDouble("PP Path Points", () -> m_pathPlannerPathPoints);
+    pathDebug.addString("PP Active Path", () -> m_pathPlannerActivePath);
     addModuleDiagnostics(debug, "FL", m_frontLeft);
     addModuleDiagnostics(debug, "FR", m_frontRight);
     addModuleDiagnostics(debug, "RL", m_rearLeft);
@@ -207,7 +208,7 @@ public class DriveSubsystem extends SubsystemBase {
     m_field.setRobotPose(getPose());
   }
 
-  /** Full per-module values are retained on Debug, away from match controls. */
+  /** Full per-module values remain on Drive Diagnostics, away from match controls. */
   private static void addModuleDiagnostics(ShuffleboardTab debug, String name, MAXSwerveModule module) {
     debug.addDouble("Swerve " + name + " Actual Speed", () -> module.getState().speedMetersPerSecond);
     debug.addDouble("Swerve " + name + " Actual Angle",
