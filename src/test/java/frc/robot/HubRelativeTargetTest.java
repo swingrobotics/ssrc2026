@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.photonvision.targeting.PhotonTrackedTarget;
+import org.photonvision.targeting.TargetCorner;
 
 /** 3D geometry based on actual official 2026 HUB AprilTag field poses. */
 class HubRelativeTargetTest {
@@ -82,6 +83,14 @@ class HubRelativeTargetTest {
     assertEquals(Alliance.Blue, HubRelativeTarget.allianceForTag(18).orElseThrow());
     assertEquals(Alliance.Red, HubRelativeTarget.allianceForTag(2).orElseThrow());
     assertTrue(HubRelativeTarget.allianceForTag(1).isEmpty());
+  }
+
+  private static List<TargetCorner> fourCorners() {
+    // PhotonTrackedTarget validates exactly four minimum-area rectangle
+    // corners in assertions-enabled WPILib/JUnit test runs.
+    return List.of(
+        new TargetCorner(0, 0), new TargetCorner(1, 0),
+        new TargetCorner(1, 1), new TargetCorner(0, 1));
   }
 
   private PhotonTrackedTarget measuredTag(int id, Pose3d robotField) {
