@@ -100,7 +100,7 @@ class HubRelativeTargetTest {
     return new PhotonTrackedTarget(
         0.0, 0.0, 0.0, 0.0,
         id, -1, 0.0f, cameraToTag, Transform3d.kZero, 0.05,
-        new ArrayList<>(), new ArrayList<>());
+        fourCorners(), new ArrayList<>());
   }
 
   @Test
@@ -136,7 +136,7 @@ class HubRelativeTargetTest {
         bad.getBestCameraToTarget().getRotation());
     var corrupted = new PhotonTrackedTarget(
         0, 0, 0, 0, 20, -1, 0.0f, wrongTransform, Transform3d.kZero, 0.05,
-        new ArrayList<>(), new ArrayList<>());
+        fourCorners(), new ArrayList<>());
 
     var tracker = new HubRelativeTarget(VisionConstants.FIELD_LAYOUT);
     Pose2d odometry = new Pose2d(
