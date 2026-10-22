@@ -87,6 +87,7 @@ public class RobotContainer {
   private final GenericEntry m_shooterRpmToleranceEntry;
   private boolean m_teleopFeedForward = false;
   private boolean m_teleopShootCommandActive = false;
+  private boolean m_manualFeederCommandActive = false;
   // Hood manual control remains independent until future measured calibration.
 
   // Autonomous commands set a request; subsystem default commands own the
@@ -213,8 +214,10 @@ public class RobotContainer {
     // Button/robot state troubleshooting is separated from operator controls.
     ShuffleboardTab mechanismDebug = Shuffleboard.getTab("Mechanism Diagnostics");
     mechanismDebug.addBoolean("Driver B Pressed", m_driverController::getBButton);
+    mechanismDebug.addBoolean("Driver A Pressed", m_driverController::getAButton);
     mechanismDebug.addBoolean("Teleop Enabled", DriverStation::isTeleopEnabled);
     mechanismDebug.addBoolean("B Shoot Command Active", () -> m_teleopShootCommandActive);
+    mechanismDebug.addBoolean("A Feeder-Only Active", () -> m_manualFeederCommandActive);
 
     // No automatic RPM motor control; only the feeder uses measured RPM.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
@@ -1026,6 +1029,24 @@ public class RobotContainer {
               m_teleopShootCommandActive = false;
             },
             m_shooter, m_feeder));
+
+    // Hold A to run ONLY the feeder forward; the shooter remains independent.
+    // B takes priority if pressed simultaneously: this gate falls false before
+    // the A command can interrupt the B shooter+feeder command.
+    // Independent manual feeding bypasses the shooter's RPM readiness gate.
+    new Trigger(() -> DriverStation.isTeleopEnabled()
+        && m_driverController.getAButton() && !m_driverController.getBButton())
+        .whileTrue(Commands.runEnd(
+            () -> {
+              m_manualFeederCommandActive = true;
+              m_feeder.runFeeder(
+                  getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent));
+            },
+            () -> {
+              m_feeder.stopFeeder();
+              m_manualFeederCommandActive = false;
+            },
+            m_feeder));
 
     // Move the original A/B toggle functions to unused X/Y buttons.
     new JoystickButton(m_driverController, XboxController.Button.kX.value)
