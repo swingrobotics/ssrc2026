@@ -12,31 +12,20 @@ import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj.shuffleboard.ShuffleboardTab;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.FeederConstants;
-import java.util.Objects;
-import java.util.function.BooleanSupplier;
 
 /**
- * Two-motor feeder (11 leader, 14 inverted follower).
- *
- * This is the shooter-side feeder (CAN 11 leader, CAN 14 follower).
- * The upstream supplier checks measured, settled flywheel rotation
- * while the shooter is controlled by motor output PERCENT only.
- * If readiness is lost or the robot is disabled, the feeder stops.
- * A request is required: teleop A button or explicitly armed autonomous.
- * Merely reaching flywheel speed does not start feeding.
+ * Two-motor shooter-side feeder: CAN 11 leader, CAN 14 inverted follower.
+ * Signed commands select travel direction. Callers own shooter RPM decisions;
+ * this subsystem still stops when disabled or given an invalid command.
  */
 public class FeederSubsystem extends SubsystemBase {
   private final SparkMax feeder11 =
       new SparkMax(FeederConstants.FEEDER_11_ID, MotorType.kBrushless);
   private final SparkMax feeder14 =
       new SparkMax(FeederConstants.FEEDER_14_ID, MotorType.kBrushless);
-
-  private final BooleanSupplier shooterReady;
   private double commandedOutput = 0.0;
 
-  public FeederSubsystem(BooleanSupplier shooterReady) {
-    this.shooterReady = Objects.requireNonNull(shooterReady, "shooterReady");
-
+  public FeederSubsystem() {
     SparkMaxConfig feeder11Config = new SparkMaxConfig();
     feeder11Config.idleMode(IdleMode.kCoast).smartCurrentLimit(20);
     feeder11.configure(feeder11Config, ResetMode.kResetSafeParameters,
@@ -48,22 +37,17 @@ public class FeederSubsystem extends SubsystemBase {
         PersistMode.kPersistParameters);
 
     stopFeeder();
-
     ShuffleboardTab shooterTab = Shuffleboard.getTab("Shooter");
-    shooterTab.addBoolean("Feeder Allowed", this::isFeedAllowed);
+    shooterTab.addBoolean("Feeder Enabled", DriverStation::isEnabled);
     shooterTab.addBoolean("Feeder Command Active", this::isFeeding);
     shooterTab.addDouble("Feeder Command (%)", () -> commandedOutput * 100.0);
   }
 
-  /** Whether a new feeder command is permitted right now. */
   public boolean isFeedAllowed() {
-    return DriverStation.isEnabled() && shooterReady.getAsBoolean();
+    return DriverStation.isEnabled();
   }
 
-  /**
-   * Feed at the requested duty cycle only while the shooter ready supplier
-   * returns true. Lost readiness stops output on the next 20ms cycle.
-   */
+  /** Positive is the existing toward-shooter command; negative reverses it. */
   public void runFeeder(double output) {
     if (!Double.isFinite(output) || !isFeedAllowed()) {
       stopFeeder();
@@ -86,7 +70,11 @@ public class FeederSubsystem extends SubsystemBase {
     return commandedOutput != 0.0 && isFeedAllowed();
   }
 
-  /** Stop the leader and its hardware follower; used on release/interruption. */
+  public String getDirection() {
+    if (!isFeeding()) return "STOP";
+    return commandedOutput > 0.0 ? "FORWARD" : "REVERSE";
+  }
+
   public void stopFeeder() {
     commandedOutput = 0.0;
     feeder11.stopMotor();
@@ -94,7 +82,6 @@ public class FeederSubsystem extends SubsystemBase {
 
   @Override
   public void periodic() {
-    // Backstop even if a caller forgets to check the shooter speed.
     if (commandedOutput != 0.0 && !isFeedAllowed()) {
       stopFeeder();
     }

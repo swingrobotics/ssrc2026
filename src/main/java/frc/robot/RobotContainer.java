@@ -69,9 +69,8 @@ public class RobotContainer {
   // Keep drivetrain, shooter/feeder, hood and intake mechanisms independent.
   private final DriveSubsystem m_robotDrive = new DriveSubsystem();
   private final ShooterSubsystem m_shooter = new ShooterSubsystem();
-  // The SHOOTER feeder (CAN 11/14) may feed only after measured flywheel
-  // stability of real rotation before accepting feeder commands.
-  private final FeederSubsystem m_feeder = new FeederSubsystem(m_shooter::isReadyToFeed);
+  // Shooter-side feeder: signed duty cycle chooses forward or reverse.
+  private final FeederSubsystem m_feeder = new FeederSubsystem();
   private final HoodSubsystem m_hood = new HoodSubsystem();
   // Intake roller controllers use CAN 16/17; confirm physical IDs before operation.
   private final IntakeSubsystem m_intake = new IntakeSubsystem();
@@ -81,6 +80,9 @@ public class RobotContainer {
   private final GenericEntry m_driveSpeedEntry;
   private final GenericEntry m_shooterSpeedEntry;
   private final GenericEntry m_feederSpeedEntry;
+  private final GenericEntry m_shooterTargetRpmEntry;
+  private final GenericEntry m_shooterRpmToleranceEntry;
+  private boolean m_teleopFeedForward = false;
   // Hood manual control remains independent until future measured calibration.
 
   // Autonomous commands set a request; subsystem default commands own the
@@ -173,8 +175,18 @@ public class RobotContainer {
     m_feederSpeedEntry = shooterTab.add("Feeder Speed (%)", kDefaultFeederPercent)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.0, "max", 100.0)).getEntry();
+    // A target RPM must be calibrated from the actual shaft encoder at the
+    // selected shooter duty cycle. Zero disables automatic feeder motion.
+    m_shooterTargetRpmEntry = shooterTab.add("Shooter Target RPM (calibrate)", 0.0).getEntry();
+    m_shooterRpmToleranceEntry = shooterTab.add("Feed RPM Tolerance", 150.0)
+        .withWidget(BuiltInWidgets.kNumberSlider)
+        .withProperties(Map.of("min", 25.0, "max", 500.0)).getEntry();
+    shooterTab.addDouble("Shooter Actual RPM", m_shooter::getActualRPM);
+    shooterTab.addBoolean("Shooter At Target RPM",
+        () -> m_shooter.isAtTargetRPM(getShooterTargetRPM(), getShooterRpmTolerance()));
+    shooterTab.addString("Feeder Direction", () -> m_feeder.getDirection());
 
-    // No RPM setpoints or unmeasured hood calibration parameters.
+    // No automatic RPM motor control; only the feeder uses measured RPM.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
     m_autoFeederEnabledEntry = shotTab.add("Autonomous Feeder Enabled", false).getEntry();
     m_autoFeedDurationEntry = shotTab.add("Autonomous Feed Duration (s)", 0.75)
@@ -363,6 +375,17 @@ public class RobotContainer {
         : 0.0;
   }
 
+  private double getShooterTargetRPM() {
+    double target = m_shooterTargetRpmEntry.getDouble(0.0);
+    return Double.isFinite(target) && target > 0.0 ? target : 0.0;
+  }
+
+  private double getShooterRpmTolerance() {
+    double tolerance = m_shooterRpmToleranceEntry.getDouble(150.0);
+    return Double.isFinite(tolerance) && tolerance > 0.0
+        ? MathUtil.clamp(tolerance, 1.0, 500.0) : 0.0;
+  }
+
   /**
    * Shoots only after the chassis has actually settled. Auto Shoot holds
    * the drive subsystem for its entire duration, commanding zero robot-
@@ -533,7 +556,7 @@ public class RobotContainer {
   private boolean isAutonomousShooterReady() {
     return DriverStation.isAutonomousEnabled()
         && m_autoShooterRequested && m_hood.isHoodReady()
-        && m_shooter.isReadyToFeed()
+        && m_shooter.isAtTargetRPM(getShooterTargetRPM(), getShooterRpmTolerance())
         && m_autoShooterStartTime >= 0.0
         && Timer.getFPGATimestamp() - m_autoShooterStartTime >= 1.0;
   }
@@ -870,23 +893,36 @@ public class RobotContainer {
    * Use this method to define your button->command mappings.
    */
   private void configureButtonBindings() {
-    // Hold A in TELEOP to request the shooter feeder. Percent output is
-    // allowed only after measured motor speed settles; otherwise it stops.
-    new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getAButton())
-        .whileTrue(Commands.runEnd(
-            () -> m_feeder.runFeeder(getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent)),
-            m_feeder::stopFeeder,
-            m_feeder));
-
-    // Hold B for percent-only shooter output.
+    // B is the only teleop shooter/feeder button. Below target shaft RPM,
+    // back the feeder away from the shooter; at target, feed toward it.
+    // Button release or interruption stops BOTH mechanisms.
     new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
-              m_shooter.setOutputPercent(
-                  getShooterOutputPercent(m_shooterSpeedEntry));
+              m_shooter.setOutputPercent(getShooterOutputPercent(m_shooterSpeedEntry));
+              ShooterFeedController.Direction direction = ShooterFeedController.select(
+                  DriverStation.isTeleopEnabled() && m_shooter.isRunning(),
+                  m_shooter.getActualRPM(),
+                  getShooterTargetRPM(),
+                  getShooterRpmTolerance(),
+                  m_teleopFeedForward);
+              double feederOutput =
+                  getOutputScale(m_feederSpeedEntry, kDefaultFeederPercent);
+              if (direction == ShooterFeedController.Direction.FORWARD) {
+                m_feeder.runFeeder(feederOutput);
+              } else if (direction == ShooterFeedController.Direction.REVERSE) {
+                m_feeder.runFeeder(-feederOutput);
+              } else {
+                m_feeder.stopFeeder();
+              }
+              m_teleopFeedForward = direction == ShooterFeedController.Direction.FORWARD;
             },
-            m_shooter::stopShooter,
-            m_shooter));
+            () -> {
+              m_feeder.stopFeeder();
+              m_shooter.stopShooter();
+              m_teleopFeedForward = false;
+            },
+            m_shooter, m_feeder));
 
     // Move the original A/B toggle functions to unused X/Y buttons.
     new JoystickButton(m_driverController, XboxController.Button.kX.value)

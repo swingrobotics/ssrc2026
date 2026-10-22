@@ -9,15 +9,13 @@ import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.config.SparkMaxConfig;
 import edu.wpi.first.math.MathUtil;
 import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.shuffleboard.Shuffleboard;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.ShooterConstants;
 
 /**
- * Percent-output ONLY shooter. Motors 10 and 12 remain hardware followers
- * of motor 9. The encoder is read solely to detect settled rotation before
- * feeding, never to command velocity or convert RPM into motor output.
+ * Percent-output-only shooter; measured shaft RPM is used for feeder direction,
+ * never to convert an RPM target into motor duty cycle.
  */
 public class ShooterSubsystem extends SubsystemBase {
   private final SparkMax shooter9 =
@@ -27,16 +25,7 @@ public class ShooterSubsystem extends SubsystemBase {
   private final SparkMax shooter12 =
       new SparkMax(ShooterConstants.SHOOTER_12_ID, MotorType.kBrushless);
   private final RelativeEncoder shooter9Encoder = shooter9.getEncoder();
-
-  // Internal encoder safety thresholds, NOT shooter speed control settings.
-  private static final double MIN_MEASURED_SHAFT_RPM = 300.0;
-  private static final double MIN_SPINUP_SECONDS = 0.75;
-  private static final int REQUIRED_SETTLED_CYCLES = 8;
-
   private double commandedPercent = 0.0;
-  private double startTimestamp = -1.0;
-  private double previousMeasuredRPM = Double.NaN;
-  private int settledCycles = 0;
 
   public ShooterSubsystem() {
     SparkMaxConfig leader = new SparkMaxConfig();
@@ -61,17 +50,12 @@ public class ShooterSubsystem extends SubsystemBase {
         PersistMode.kPersistParameters);
 
     stopShooter();
-
     var shooterTab = Shuffleboard.getTab("Shooter");
     shooterTab.addDouble("Shooter Command (%)", this::getOutputPercent);
     shooterTab.addBoolean("Shooter Running", this::isRunning);
-    shooterTab.addBoolean("Feeder Speed Stable", this::isReadyToFeed);
   }
 
-  /**
-   * Request genuine motor duty-cycle percentage (0-75), preserving original
-   * negative leader direction. Disable or invalid commands always stop.
-   */
+  /** Request percent output (0-75), preserving the original negative direction. */
   public void setOutputPercent(double requestedPercent) {
     if (DriverStation.isDisabled()
         || !Double.isFinite(requestedPercent)
@@ -79,16 +63,9 @@ public class ShooterSubsystem extends SubsystemBase {
       stopShooter();
       return;
     }
-
-    double percent = MathUtil.clamp(
+    commandedPercent = MathUtil.clamp(
         requestedPercent, 0.0, ShooterConstants.MAX_MOTOR_OUTPUT * 100.0);
-    if (!isRunning() || Math.abs(percent - commandedPercent) > 0.1) {
-      startTimestamp = Timer.getFPGATimestamp();
-      previousMeasuredRPM = Double.NaN;
-      settledCycles = 0;
-    }
-    commandedPercent = percent;
-    shooter9.set(ShooterConstants.MOTOR_DIRECTION * percent / 100.0);
+    shooter9.set(ShooterConstants.MOTOR_DIRECTION * commandedPercent / 100.0);
   }
 
   public void runShooter() {
@@ -103,56 +80,29 @@ public class ShooterSubsystem extends SubsystemBase {
     return commandedPercent > 0.0;
   }
 
-  /** For internal safety check only: positive in normal shooting direction. */
+  /** Encoder shaft RPM; positive indicates normal shooting direction. */
   public double getActualRPM() {
     return shooter9Encoder.getVelocity() * ShooterConstants.MOTOR_DIRECTION;
   }
 
-  /**
-   * Readiness means sustained measured rotation, NOT a guaranteed shot.
-   * We do not maintain a target shaft RPM in this percent-output design.
-   */
-  public boolean isReadyToFeed() {
-    return DriverStation.isEnabled()
-        && isRunning()
-        && startTimestamp >= 0.0
-        && Timer.getFPGATimestamp() - startTimestamp >= MIN_SPINUP_SECONDS
-        && settledCycles >= REQUIRED_SETTLED_CYCLES
-        && Double.isFinite(getActualRPM())
-        && getActualRPM() >= MIN_MEASURED_SHAFT_RPM;
+  /** Positive measured RPM must reach the calibrated target minus tolerance. */
+  public boolean isAtTargetRPM(double targetRPM, double toleranceRPM) {
+    double rpm = getActualRPM();
+    return DriverStation.isEnabled() && isRunning()
+        && Double.isFinite(targetRPM) && Double.isFinite(toleranceRPM)
+        && targetRPM > toleranceRPM && toleranceRPM > 0.0
+        && Double.isFinite(rpm) && rpm >= targetRPM - toleranceRPM;
   }
 
   public void stopShooter() {
     commandedPercent = 0.0;
-    startTimestamp = -1.0;
-    settledCycles = 0;
-    previousMeasuredRPM = Double.NaN;
     shooter9.stopMotor();
   }
 
   @Override
   public void periodic() {
-    if (DriverStation.isDisabled()) {
-      if (isRunning()) {
-        stopShooter();
-      }
-      return;
+    if (DriverStation.isDisabled() && isRunning()) {
+      stopShooter();
     }
-    double measuredRPM = getActualRPM();
-    if (!isRunning() || !Double.isFinite(measuredRPM)
-        || measuredRPM < MIN_MEASURED_SHAFT_RPM) {
-      settledCycles = 0;
-      previousMeasuredRPM = Double.NaN;
-      return;
-    }
-
-    double allowedVariation = Math.max(120.0, Math.abs(measuredRPM) * 0.08);
-    if (Double.isFinite(previousMeasuredRPM)
-        && Math.abs(measuredRPM - previousMeasuredRPM) <= allowedVariation) {
-      settledCycles = Math.min(settledCycles + 1, REQUIRED_SETTLED_CYCLES);
-    } else {
-      settledCycles = 0;
-    }
-    previousMeasuredRPM = measuredRPM;
   }
 }
