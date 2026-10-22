@@ -5,6 +5,64 @@ Branch: `hub-pose-fusion-2026` based on `intake-subsystem`
 The parent branch is unchanged. Development does NOT mean this is
 calibrated or proven accurate on a real robot.
 
+## Camera mounting correction / validation — 2026-10-22
+
+**Reported physical setup:** the USB camera housing is upside-down (physical
+roll 180 degrees), its optical axis points 25 degrees UP relative to robot
+forward, and **PhotonVision Input > Orientation = 180 degrees** is already
+configured. PhotonVision rotates input frames BEFORE vision processing.
+
+**The existing constants were already consistent with that description under
+the effective upright processed-image coordinate-frame assumption.**
+`ROBOT_TO_CAMERA` has roll 0 degrees, pitch -25 degrees (negative WPILib
+pitch means the camera optical axis points UP), yaw 0 degrees.
+We have intentionally **not** invented a new pitch or applied an additional
+180-degree roll, which could double-correct the orientation.
+
+This assumption must still be checked with REAL 3-D camera observations:
+PhotonVision Orientation UI rotation does not give us a live readback of the
+pose-coordinate convention through PhotonLib. Existing camera translation
+X=0.31732884884m, Y=0m, Z=0.40394608582m was reported earlier, not
+physically re-measured in this update. Real-world camera or tag alignment
+can be off even when geometric unit tests pass.
+
+### Live mount check with real 3D AprilTag detection
+
+1. Keep PhotonVision camera calibration at the AprilTag pipeline resolution.
+   Input > Orientation should be **180 degrees** as already configured.
+   Enable **Always Do Single-Target Estimation** when using MultiTag. Ensure
+   the individual camera-to-tag transform is nonzero.
+2. Robot stays DISABLED, on a LEVEL floor. Use an AprilTag mounted at the
+   EXACT OFFICIAL 2026 field-layout height; **an arbitrary practice-tag
+   height invalidates the comparison**, even if the tag ID matches.
+3. View Shuffleboard `Vision` values:
+   - `Camera Expected PV Orientation (deg)`: expected UI setting (180),
+     NOT an actual readback from PhotonVision.
+   - `Camera Config Roll/Pitch/Yaw (deg)`: effective `ROBOT_TO_CAMERA`
+     settings (0/-25/0).
+   - `Camera Mount Tag ID`: which observed tag was selected.
+   - `Camera Mount Tag Z (m)`: reconstructed target height above robot
+     floor, assuming the robot is level and its origin is at ground Z=0.
+   - `Camera Mount Tag Height Error (m)`: reconstructed tag Z minus the
+     official WPILib tag height. Compare while slowly changing camera
+     position across DISTANCES with the robot safely DISABLED.
+   - `Camera Mount Check Status`: whether the height residual is small or
+     large; it does not by itself validate lateral position, yaw, or roll.
+4. Compare tag X/Y and range with physically measured positions. A
+   nonzero error that grows with tag distance suggests a pitch/roll
+   convention issue, bad camera intrinsics, incorrect camera height or
+   wrong tag mounting height. Verify the entire 3-D coordinate convention
+   before modifying numeric extrinsics.
+5. Only after physical geometry has been validated enable
+   `Hub Direct Geometry Verified` and test slow yaw movement on a
+   secured robot. Do NOT enable this safety gate merely because the
+   constants match the reported angles.
+
+Reference:
+- https://docs.photonvision.org/en/latest/docs/pipelines/input.html
+- https://docs.photonvision.org/en/latest/docs/programming/photonlib/robot-pose-estimator.html
+- https://docs.photonvision.org/en/latest/docs/apriltag-pipelines/coordinate-systems.html
+
 ## Current HUB aiming — 2026-10-22 update
 
 **Direct aiming is now the primary Teleop X-button target.** This follows
