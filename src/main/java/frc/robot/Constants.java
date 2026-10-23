@@ -129,10 +129,10 @@ public final class Constants {
     // Conservative first-power-on limits; tune only after confirming roller direction.
     public static final int CURRENT_LIMIT_AMPS = 40;
     public static final double MAX_OUTPUT = 1.00;
-    public static final double DEFAULT_OUTPUT = 0.85;
+    public static final double DEFAULT_OUTPUT = 0.70;
   }
 
-  /**
+  /** 
    * Rack-and-pinion intake arm, separate from the two intake rollers.
    * Assign the real unused CAN ID after confirming the SPARK MAX wiring.
    * Until then the subsystem will not construct a motor or drive anything.
@@ -159,11 +159,11 @@ public final class Constants {
     // Motor 9 was previously driven with negative duty cycle.
     public static final double MOTOR_DIRECTION = -1.0;
     // Shooter uses direct motor duty-cycle (%) restored from older branches.
-    public static final double DEFAULT_OUTPUT_PERCENT = 50.0;
+    public static final double DEFAULT_OUTPUT_PERCENT = 85.0;
     // Keep the current branch's measured 40 A motor current limits.
     public static final int CURRENT_LIMIT_AMPS = 40;
     // Historical percent-output version allowed up to 75%.
-    public static final double MAX_MOTOR_OUTPUT = 0.75;
+    public static final double MAX_MOTOR_OUTPUT = 1.0;
   }
 
   public static final class FeederConstants {

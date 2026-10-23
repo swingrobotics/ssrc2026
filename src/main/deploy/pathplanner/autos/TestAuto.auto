@@ -33,6 +33,24 @@
           "data": {
             "pathName": "move 2"
           }
+        },
+        {
+          "type": "path",
+          "data": {
+            "pathName": "shoot 1"
+          }
+        },
+        {
+          "type": "path",
+          "data": {
+            "pathName": "shoot 2"
+          }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": null
+          }
         }
       ]
     }
