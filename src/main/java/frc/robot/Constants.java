@@ -244,6 +244,10 @@ public final class Constants {
     
     public static final double MIN_POSITION = 0.196;
     public static final double MAX_POSITION = 0.410;
+    // PathPlanner point-blank shot: assume the raised hood is at the MAX
+    // absolute-encoder endpoint. If the physical hood rises toward MIN,
+    // change ONLY this setpoint to MIN_POSITION after checking the mechanism.
+    public static final double AUTO_FULL_RAISED_POSITION = MAX_POSITION;
     public static final boolean POSITIVE_OUTPUT_INCREASES_ENCODER = false;
     // Encoder fractional-turn units. Tune against measured steady-state error.
     public static final double AUTO_TARGET_TOLERANCE = 0.006;

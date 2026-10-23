@@ -62,7 +62,7 @@ public class RobotContainer {
   private static final double kAutoShootMaxAngularSpeedRadPerSec = 0.15;
   private static final double kAutoShootStopStableSeconds = 0.25;
   private static final double kAutoShootStopTimeoutSeconds = 1.5;
-  private static final double kAutoShootReadyTimeoutSeconds = 2.0;
+  private static final double kAutoShootReadyTimeoutSeconds = 3.0;
   // A short pause with the feeder stopped; NOT confirmation that fuel exited.
   private static final double kAutoShootPostFeedPauseSeconds = 0.15;
    private static final double kDefaultFeederPercent = Math.abs(FeederConstants.TEST_SPEED) * 100.0;
@@ -99,6 +99,7 @@ public class RobotContainer {
   private double m_autoStopStableSince = -1.0;
   private String m_autoLastShotResult = "NOT RUN";
   private boolean m_autoShooterRequested = false;
+  private boolean m_autoHoodMaxRequested = false;
   private double m_autoShooterTargetPercent = 0.0;
   private double m_autoShooterStartTime = -1.0;
   private String m_autoShooterStatus = "Idle";
@@ -241,6 +242,8 @@ public class RobotContainer {
     shotTab.addString("Autonomous Shooter Status", () -> m_autoShooterStatus);
     shotTab.addString("Last Auto Shot Result", () -> m_autoLastShotResult);
     shotTab.addBoolean("Auto Robot Stopped", this::isAutonomousDriveStoppedNow);
+    shotTab.addBoolean("Auto Hood Max Reached",
+        () -> m_autoHoodMaxRequested && m_hood.isAtTargetPosition());
 
     // Calibrate the raw DUTY CYCLE encoder at two measured distances.
     // Values start at zero to prevent a fabricated calibration. This stage
@@ -520,13 +523,18 @@ public class RobotContainer {
             },
             m_robotDrive));
 
-    // Right stick remains the only hood motion request; release holds position.
+    // Teleop right stick is unchanged. In autonomous, the hood follows the
+    // fixed point-blank setpoint while the request is active across paths.
     m_hood.setDefaultCommand(new RunCommand(() -> {
-      double input = DriverStation.isTeleopEnabled()
-          ? MathUtil.applyDeadband(-m_driverController.getRightY(),
-              OIConstants.kHoodDeadband)
-          : 0.0;
-      m_hood.setManual(input * HoodConstants.TEST_MAX_SPEED);
+      if (DriverStation.isAutonomousEnabled() && m_autoHoodMaxRequested) {
+        m_hood.setTargetPosition(HoodConstants.AUTO_FULL_RAISED_POSITION);
+      } else {
+        double input = DriverStation.isTeleopEnabled()
+            ? MathUtil.applyDeadband(-m_driverController.getRightY(),
+                OIConstants.kHoodDeadband)
+            : 0.0;
+        m_hood.setManual(input * HoodConstants.TEST_MAX_SPEED);
+      }
     }, m_hood));
 
     // Keeps motor ownership in one command (and avoids path-marker commands
@@ -608,6 +616,20 @@ public class RobotContainer {
     NamedCommands.registerCommand("Auto Shoot", makeStationaryAutoShootCommand());
     NamedCommands.registerCommand("Auto Shooter Stop",
         Commands.runOnce(this::stopAutonomousShooter));
+    NamedCommands.registerCommand("Auto Hood Max",
+        Commands.runOnce(this::requestAutonomousHoodMax));
+    NamedCommands.registerCommand("Auto Hood Hold",
+        Commands.runOnce(this::stopAutonomousHoodTarget));
+  }
+
+  private void requestAutonomousHoodMax() {
+    m_autoHoodMaxRequested =
+        DriverStation.isAutonomousEnabled() && m_hood.isHoodReady();
+  }
+
+  private void stopAutonomousHoodTarget() {
+    m_autoHoodMaxRequested = false;
+    m_hood.captureCurrentPosition();
   }
 
   /**
@@ -789,12 +811,14 @@ public class RobotContainer {
     m_autoShooterTargetPercent = outputPercent;
     m_autoShooterStartTime = Timer.getFPGATimestamp();
     m_autoShooterRequested = true;
-    m_autoShooterStatus = "SPINNING: shooter duty-cycle percent";
+    requestAutonomousHoodMax();
+    m_autoShooterStatus = "SPINNING: shooter percent + hood max target";
   }
 
   private boolean isAutonomousShooterReady() {
     return DriverStation.isAutonomousEnabled()
-        && m_autoShooterRequested && m_hood.isHoodReady()
+        && m_autoShooterRequested && m_autoHoodMaxRequested
+        && m_hood.isHoodReady() && m_hood.isAtTargetPosition()
         && m_shooter.isReadyToFeed()
         && m_autoShooterStartTime >= 0.0
         && Timer.getFPGATimestamp() - m_autoShooterStartTime >= 1.0;
@@ -804,6 +828,7 @@ public class RobotContainer {
     m_feeder.stopFeeder();
     m_autoFeedDeadline = -1.0;
     m_autoShooterRequested = false;
+    m_autoHoodMaxRequested = false;
     m_autoShooterTargetPercent = 0.0;
     m_autoShooterStartTime = -1.0;
     m_shooter.stopShooter();

@@ -5,6 +5,12 @@
     "data": {
       "commands": [
         {
+          "type": "named",
+          "data": {
+            "name": "Auto Hood Max"
+          }
+        },
+        {
           "type": "path",
           "data": {
             "pathName": "move 1"

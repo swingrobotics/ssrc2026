@@ -65,6 +65,7 @@ class PathPlannerAssetsTest {
     String json = Files.readString(
         DEPLOY.resolve("autos").resolve("TestAuto.auto"), StandardCharsets.UTF_8);
     String[] steps = {
+        "\"name\": \"Auto Hood Max\"",
         "\"pathName\": \"move 1\"",
         "\"name\": \"Auto Intake Start\"",
         "\"pathName\": \"intake 1\"",
