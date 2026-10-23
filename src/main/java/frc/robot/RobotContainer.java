@@ -102,6 +102,9 @@ public class RobotContainer {
   private double m_autoShooterTargetPercent = 0.0;
   private double m_autoShooterStartTime = -1.0;
   private String m_autoShooterStatus = "Idle";
+  // The intake request survives between PathPlanner paths; 1 = in, -1 = reverse.
+  // The subsystem's default command owns the motors, not the path command.
+  private int m_autoIntakeDirection = 0;
   private final GenericEntry m_visionFusionEntry;
   private final GenericEntry m_visionResetEntry;
   private final GenericEntry m_fieldVerifiedEntry;
@@ -230,7 +233,7 @@ public class RobotContainer {
     // Shooter CAN 9 direct duty cycle, with 10/12 hardware followers.
     // A-button feeder control remains manual and independent.
     ShuffleboardTab shotTab = Shuffleboard.getTab("Shot Tuning");
-    m_autoFeederEnabledEntry = shotTab.add("Autonomous Feeder Enabled", false).getEntry();
+    m_autoFeederEnabledEntry = shotTab.add("Autonomous Feeder Enabled", true).getEntry();
     m_autoFeedDurationEntry = shotTab.add("Autonomous Feed Duration (s)", 0.75)
         .withWidget(BuiltInWidgets.kNumberSlider)
         .withProperties(Map.of("min", 0.1, "max", 2.0)).getEntry();
@@ -480,6 +483,7 @@ public class RobotContainer {
     configureButtonBindings();
     // Must register before AutoBuilder.buildAutoChooser() parses .auto files.
     registerAutonomousShooterCommands();
+    registerAutonomousIntakeCommands();
 
     SendableChooser<Command> autoChooser;
     try {
@@ -534,6 +538,20 @@ public class RobotContainer {
         m_shooter.stopShooter();
       }
     }, m_shooter));
+
+    // Auto intake keeps running while PathPlanner follows a path. Teleop LB
+    // temporarily overrides this default command without affecting shooter.
+    m_intake.setDefaultCommand(new RunCommand(() -> {
+      if (!DriverStation.isAutonomousEnabled()) {
+        m_intake.stopIntake();
+      } else if (m_autoIntakeDirection > 0) {
+        m_intake.runIntake();
+      } else if (m_autoIntakeDirection < 0) {
+        m_intake.reverseIntake();
+      } else {
+        m_intake.stopIntake();
+      }
+    }, m_intake));
 
     // Own the feeder continuously in an independent command so A and the
     // short-lived dashboard test share exactly the same stop/speed logic.
@@ -590,6 +608,38 @@ public class RobotContainer {
     NamedCommands.registerCommand("Auto Shoot", makeStationaryAutoShootCommand());
     NamedCommands.registerCommand("Auto Shooter Stop",
         Commands.runOnce(this::stopAutonomousShooter));
+  }
+
+  /**
+   * PathPlanner intake actions are independent of the drivetrain, so they can
+   * be used as sequential auto steps or path event markers.
+   *
+   * Arm actions are short pulses only: there is no calibrated travel limit
+   * or absolute arm encoder, so they are NOT automatic deploy-to-position.
+   */
+  private void registerAutonomousIntakeCommands() {
+    NamedCommands.registerCommand("Auto Intake Start",
+        Commands.runOnce(() -> setAutonomousIntakeDirection(1)));
+    NamedCommands.registerCommand("Auto Intake Reverse",
+        Commands.runOnce(() -> setAutonomousIntakeDirection(-1)));
+    NamedCommands.registerCommand("Auto Intake Stop",
+        Commands.runOnce(this::stopAutonomousIntake));
+    NamedCommands.registerCommand("Auto Intake Arm Forward",
+        Commands.runEnd(m_intakeArm::moveForward, m_intakeArm::stopArm, m_intakeArm)
+            .withTimeout(0.5));
+    NamedCommands.registerCommand("Auto Intake Arm Backward",
+        Commands.runEnd(m_intakeArm::moveBackward, m_intakeArm::stopArm, m_intakeArm)
+            .withTimeout(0.5));
+  }
+
+  private void setAutonomousIntakeDirection(int direction) {
+    m_autoIntakeDirection = DriverStation.isAutonomousEnabled()
+        ? Integer.signum(direction) : 0;
+  }
+
+  private void stopAutonomousIntake() {
+    m_autoIntakeDirection = 0;
+    m_intake.stopIntake();
   }
 
   /** Checks actual encoder-derived chassis velocity, not commanded velocity. */
@@ -1271,6 +1321,10 @@ public class RobotContainer {
       return Commands.none();
     }
     // Stop flywheels even when an auto is interrupted before its Stop marker.
-    return auto.finallyDo(interrupted -> stopAutonomousShooter());
+    return auto.finallyDo(interrupted -> {
+      stopAutonomousShooter();
+      stopAutonomousIntake();
+      m_intakeArm.stopArm();
+    });
   }
 }

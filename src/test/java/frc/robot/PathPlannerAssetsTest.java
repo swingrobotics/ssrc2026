@@ -1,5 +1,6 @@
 package frc.robot;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -22,6 +23,67 @@ class PathPlannerAssetsTest {
   private static final Path DEPLOY = Path.of("src", "main", "deploy", "pathplanner");
   private static final Pattern PATH_REFERENCE =
       Pattern.compile("\\\"pathName\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+
+  private static final Pattern NAMED_TYPE =
+      Pattern.compile("\"type\"\\s*:\\s*\"named\"");
+  private static final Pattern NAMED_REFERENCE =
+      Pattern.compile("\"type\"\\s*:\\s*\"named\"\\s*,\\s*\"data\"\\s*:\\s*\\{\\s*\"name\"\\s*:\\s*(null|\"([^\"]*)\")");
+
+  @Test
+  void allAutoNamedCommandsAreValidAndRegistered() throws IOException {
+    Path autosFolder = DEPLOY.resolve("autos");
+    String robotContainer = Files.readString(
+        Path.of("src", "main", "java", "frc", "robot", "RobotContainer.java"),
+        StandardCharsets.UTF_8);
+    try (Stream<Path> entries = Files.list(autosFolder)) {
+      for (Path autoFile : entries.filter(p -> p.toString().endsWith(".auto")).toList()) {
+        String json = Files.readString(autoFile, StandardCharsets.UTF_8);
+        Matcher types = NAMED_TYPE.matcher(json);
+        Matcher names = NAMED_REFERENCE.matcher(json);
+        int typeCount = 0;
+        int nameCount = 0;
+        while (types.find()) {
+          typeCount++;
+        }
+        while (names.find()) {
+          nameCount++;
+          String name = names.group(2);
+          assertTrue(name != null && !name.isBlank(),
+              () -> "Unnamed PathPlanner command in " + autoFile);
+          assertTrue(robotContainer.contains(
+              "NamedCommands.registerCommand(\"" + name + "\""),
+              () -> "Unregistered PathPlanner command: " + name);
+        }
+        assertEquals(typeCount, nameCount,
+            "Every named step must contain a valid command name in " + autoFile);
+      }
+    }
+  }
+
+  @Test
+  void testAutoStartsAndStopsIntakeThenShoots() throws IOException {
+    String json = Files.readString(
+        DEPLOY.resolve("autos").resolve("TestAuto.auto"), StandardCharsets.UTF_8);
+    String[] steps = {
+        "\"pathName\": \"move 1\"",
+        "\"name\": \"Auto Intake Start\"",
+        "\"pathName\": \"intake 1\"",
+        "\"pathName\": \"intake 2\"",
+        "\"name\": \"Auto Intake Stop\"",
+        "\"name\": \"Auto Shooter Start\"",
+        "\"pathName\": \"move 2\"",
+        "\"pathName\": \"shoot 1\"",
+        "\"pathName\": \"shoot 2\"",
+        "\"name\": \"Auto Shoot\"",
+        "\"name\": \"Auto Shooter Stop\""
+    };
+    int cursor = -1;
+    for (String step : steps) {
+      int next = json.indexOf(step, cursor + 1);
+      assertTrue(next > cursor, "Missing or out-of-order auto step: " + step);
+      cursor = next;
+    }
+  }
 
   @Test
   void selectableAutosReferenceExistingPathFiles() throws IOException {
