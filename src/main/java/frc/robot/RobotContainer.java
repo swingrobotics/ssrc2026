@@ -221,6 +221,7 @@ public class RobotContainer {
     mechanismDebug.addBoolean("Operator B Pressed", m_operatorController::getBButton);
     mechanismDebug.addBoolean("Operator A Pressed", m_operatorController::getAButton);
     mechanismDebug.addBoolean("Operator X Pressed", m_operatorController::getXButton);
+    mechanismDebug.addBoolean("Operator Y Pressed", m_operatorController::getYButton);
     mechanismDebug.addDouble("Operator Arm Stick Y",
         () -> -m_operatorController.getLeftY());
     mechanismDebug.addBoolean("Teleop Enabled", DriverStation::isTeleopEnabled);
@@ -1217,11 +1218,20 @@ public class RobotContainer {
     new JoystickButton(m_driverController, XboxController.Button.kY.value)
         .onTrue(new InstantCommand(this::toggleFieldRelative));
 
-    // Operator X runs intake rollers while held; release stops them.
+    // Operator X intakes forward; Y reverses. Y has priority if both are held,
+    // so the two commands cannot repeatedly interrupt each other.
     new Trigger(() -> DriverStation.isTeleopEnabled()
-        && m_operatorController.getXButton())
+        && m_operatorController.getXButton()
+        && !m_operatorController.getYButton())
         .whileTrue(Commands.runEnd(
             m_intake::runIntake,
+            m_intake::stopIntake,
+            m_intake));
+
+    new Trigger(() -> DriverStation.isTeleopEnabled()
+        && m_operatorController.getYButton())
+        .whileTrue(Commands.runEnd(
+            m_intake::reverseIntake,
             m_intake::stopIntake,
             m_intake));
 

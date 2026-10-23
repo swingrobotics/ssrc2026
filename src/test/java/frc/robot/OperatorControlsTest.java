@@ -29,6 +29,9 @@ class OperatorControlsTest {
     assertTrue(container.contains("m_operatorController.getAButton()"));
     assertTrue(container.contains("m_operatorController.getBButton()"));
     assertTrue(container.contains("m_operatorController.getXButton()"));
+    assertTrue(container.contains("m_operatorController.getYButton()"));
+    assertTrue(container.contains("&& !m_operatorController.getYButton()"));
+    assertTrue(container.contains("m_intake::reverseIntake"));
     assertTrue(container.contains("m_operatorController.getLeftY()"));
     assertFalse(container.contains("m_driverController.getAButton()"));
     assertFalse(container.contains("m_driverController.getBButton()"));
