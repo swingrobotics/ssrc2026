@@ -76,7 +76,8 @@ class PathPlannerAssetsTest {
         "\"pathName\": \"shoot 1\"",
         "\"pathName\": \"shoot 2\"",
         "\"name\": \"Auto Shoot\"",
-        "\"name\": \"Auto Shooter Stop\""
+        "\"name\": \"Auto Shooter Stop\"",
+        "\"name\": \"Auto Hood Down\""
     };
     int cursor = -1;
     for (String step : steps) {

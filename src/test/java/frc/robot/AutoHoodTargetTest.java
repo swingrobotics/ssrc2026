@@ -17,4 +17,12 @@ class AutoHoodTargetTest {
     assertTrue(HoodConstants.AUTO_FULL_RAISED_POSITION
         <= HoodConstants.MAX_POSITION);
   }
+  @Test
+  void hoodDownAutoUsesMaximumEncoderEndpoint() {
+    assertTrue(Double.isFinite(HoodConstants.AUTO_FULL_LOWERED_POSITION));
+    assertEquals(HoodConstants.MAX_POSITION,
+        HoodConstants.AUTO_FULL_LOWERED_POSITION, 1e-9);
+    assertTrue(HoodConstants.AUTO_FULL_LOWERED_POSITION
+        > HoodConstants.AUTO_FULL_RAISED_POSITION);
+  }
 }

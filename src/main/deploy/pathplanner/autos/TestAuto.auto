@@ -75,6 +75,12 @@
           "data": {
             "name": "Auto Shooter Stop"
           }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": "Auto Hood Down"
+          }
         }
       ]
     }

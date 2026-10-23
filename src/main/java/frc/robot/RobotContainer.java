@@ -63,6 +63,7 @@ public class RobotContainer {
   private static final double kAutoShootStopStableSeconds = 0.25;
   private static final double kAutoShootStopTimeoutSeconds = 1.5;
   private static final double kAutoShootReadyTimeoutSeconds = 3.0;
+  private static final double kAutoHoodDownTimeoutSeconds = 4.0;
   // A short pause with the feeder stopped; NOT confirmation that fuel exited.
   private static final double kAutoShootPostFeedPauseSeconds = 0.15;
    private static final double kDefaultFeederPercent = Math.abs(FeederConstants.TEST_SPEED) * 100.0;
@@ -99,7 +100,9 @@ public class RobotContainer {
   private double m_autoStopStableSince = -1.0;
   private String m_autoLastShotResult = "NOT RUN";
   private boolean m_autoShooterRequested = false;
-  private boolean m_autoHoodMaxRequested = false;
+  // NaN means no autonomous target; otherwise this is the requested encoder position.
+  private double m_autoHoodTargetPosition = Double.NaN;
+  private String m_autoHoodDownStatus = "NOT RUN";
   private double m_autoShooterTargetPercent = 0.0;
   private double m_autoShooterStartTime = -1.0;
   private String m_autoShooterStatus = "Idle";
@@ -126,6 +129,7 @@ public class RobotContainer {
 
   // The driver's controller
   XboxController m_driverController = new XboxController(OIConstants.kDriverControllerPort);
+  XboxController m_operatorController = new XboxController(OIConstants.kOperatorControllerPort);
 
   // PathPlanner autonomous chooser.
   private final SendableChooser<Command> m_autoChooser;
@@ -214,8 +218,11 @@ public class RobotContainer {
 
     // Button/robot state troubleshooting is separated from operator controls.
     ShuffleboardTab mechanismDebug = Shuffleboard.getTab("Mechanism Diagnostics");
-    mechanismDebug.addBoolean("Driver B Pressed", m_driverController::getBButton);
-    mechanismDebug.addBoolean("Driver A Pressed", m_driverController::getAButton);
+    mechanismDebug.addBoolean("Operator B Pressed", m_operatorController::getBButton);
+    mechanismDebug.addBoolean("Operator A Pressed", m_operatorController::getAButton);
+    mechanismDebug.addBoolean("Operator X Pressed", m_operatorController::getXButton);
+    mechanismDebug.addDouble("Operator Arm Stick Y",
+        () -> -m_operatorController.getLeftY());
     mechanismDebug.addBoolean("Teleop Enabled", DriverStation::isTeleopEnabled);
     mechanismDebug.addBoolean("B Shoot Command Active", () -> m_teleopShootCommandActive);
     mechanismDebug.addBoolean("A Feeder-Only Active", () -> m_manualFeederCommandActive);
@@ -223,8 +230,12 @@ public class RobotContainer {
         () -> DriverStation.isJoystickConnected(OIConstants.kDriverControllerPort));
     mechanismDebug.addString("Controller Port 0 Name",
         () -> DriverStation.getJoystickName(OIConstants.kDriverControllerPort));
-    mechanismDebug.addBoolean("Raw Button 1 (A)",
-        () -> m_driverController.getRawButton(1));
+    mechanismDebug.addBoolean("Operator Port 1 Connected",
+        () -> DriverStation.isJoystickConnected(OIConstants.kOperatorControllerPort));
+    mechanismDebug.addString("Operator Port 1 Name",
+        () -> DriverStation.getJoystickName(OIConstants.kOperatorControllerPort));
+    mechanismDebug.addBoolean("Raw Button 1 (Operator A)",
+        () -> m_operatorController.getRawButton(1));
     mechanismDebug.addBoolean("Feeder Dashboard Test Active", () ->
         TeleopFeederControl.isDashboardTestActive(
             Timer.getFPGATimestamp(), m_feederDashboardTestDeadline));
@@ -243,7 +254,9 @@ public class RobotContainer {
     shotTab.addString("Last Auto Shot Result", () -> m_autoLastShotResult);
     shotTab.addBoolean("Auto Robot Stopped", this::isAutonomousDriveStoppedNow);
     shotTab.addBoolean("Auto Hood Max Reached",
-        () -> m_autoHoodMaxRequested && m_hood.isAtTargetPosition());
+        () -> m_autoHoodTargetPosition == HoodConstants.AUTO_FULL_RAISED_POSITION
+            && m_hood.isAtTargetPosition());
+    shotTab.addString("Auto Hood Down Status", () -> m_autoHoodDownStatus);
 
     // Calibrate the raw DUTY CYCLE encoder at two measured distances.
     // Values start at zero to prevent a fabricated calibration. This stage
@@ -524,10 +537,11 @@ public class RobotContainer {
             m_robotDrive));
 
     // Teleop right stick is unchanged. In autonomous, the hood follows the
-    // fixed point-blank setpoint while the request is active across paths.
+    // requested up/down encoder target without interrupting path following.
     m_hood.setDefaultCommand(new RunCommand(() -> {
-      if (DriverStation.isAutonomousEnabled() && m_autoHoodMaxRequested) {
-        m_hood.setTargetPosition(HoodConstants.AUTO_FULL_RAISED_POSITION);
+      if (DriverStation.isAutonomousEnabled()
+          && Double.isFinite(m_autoHoodTargetPosition)) {
+        m_hood.setTargetPosition(m_autoHoodTargetPosition);
       } else {
         double input = DriverStation.isTeleopEnabled()
             ? MathUtil.applyDeadband(-m_driverController.getRightY(),
@@ -547,7 +561,7 @@ public class RobotContainer {
       }
     }, m_shooter));
 
-    // Auto intake keeps running while PathPlanner follows a path. Teleop LB
+    // Auto intake keeps running while PathPlanner follows a path. Operator X
     // temporarily overrides this default command without affecting shooter.
     m_intake.setDefaultCommand(new RunCommand(() -> {
       if (!DriverStation.isAutonomousEnabled()) {
@@ -561,8 +575,20 @@ public class RobotContainer {
       }
     }, m_intake));
 
-    // Own the feeder continuously in an independent command so A and the
-    // short-lived dashboard test share exactly the same stop/speed logic.
+    // Operator left-stick Y gives proportional intake arm control in teleop.
+    // PathPlanner arm pulses preempt this default command during autonomous.
+    m_intakeArm.setDefaultCommand(new RunCommand(() -> {
+      if (DriverStation.isTeleopEnabled()) {
+        double stick = MathUtil.applyDeadband(
+            -m_operatorController.getLeftY(), OIConstants.kIntakeArmDeadband);
+        m_intakeArm.setManualSpeed(stick);
+      } else {
+        m_intakeArm.stopArm();
+      }
+    }, m_intakeArm));
+
+    // Own the feeder continuously in an independent command so operator A and
+    // the short-lived dashboard test share exactly the same stop/speed logic.
     // Existing autonomous feeder commands take the feeder requirement and
     // preempt this default command while their own safety gates apply.
     m_feeder.setDefaultCommand(new RunCommand(this::updateManualFeeder, m_feeder));
@@ -580,15 +606,15 @@ public class RobotContainer {
         m_shooterSpeedEntry.getDouble(ShooterConstants.DEFAULT_OUTPUT_PERCENT));
   }
 
-  /** Describes the independent A feeder and B shooter teleop controls. */
+  /** Describes the operator controller's A feeder and B shooter controls. */
   private String getTeleopShooterFeederStatus() {
     if (!DriverStation.isTeleopEnabled()) return "BLOCKED: TELEOP NOT ENABLED";
-    boolean a = m_driverController.getAButton();
-    boolean b = m_driverController.getBButton();
+    boolean a = m_operatorController.getAButton();
+    boolean b = m_operatorController.getBButton();
     boolean dashboardTest = TeleopFeederControl.isDashboardTestActive(
         Timer.getFPGATimestamp(), m_feederDashboardTestDeadline);
     if (!a && !b && !dashboardTest)
-      return "IDLE: A=FEEDER, B=SHOOTER, OR USE 2s FEEDER TEST";
+      return "IDLE: OPERATOR A=FEEDER, B=SHOOTER, OR USE 2s TEST";
     String shooter = b
         ? (m_teleopShootCommandActive && m_shooter.isRunning()
             ? "SHOOTER RUNNING" : "SHOOTER WAITING / ZERO OUTPUT")
@@ -618,17 +644,64 @@ public class RobotContainer {
         Commands.runOnce(this::stopAutonomousShooter));
     NamedCommands.registerCommand("Auto Hood Max",
         Commands.runOnce(this::requestAutonomousHoodMax));
+    NamedCommands.registerCommand("Auto Hood Down", makeAutonomousHoodDownCommand());
     NamedCommands.registerCommand("Auto Hood Hold",
         Commands.runOnce(this::stopAutonomousHoodTarget));
   }
 
   private void requestAutonomousHoodMax() {
-    m_autoHoodMaxRequested =
-        DriverStation.isAutonomousEnabled() && m_hood.isHoodReady();
+    requestAutonomousHoodTarget(HoodConstants.AUTO_FULL_RAISED_POSITION);
+  }
+
+  private void requestAutonomousHoodDown() {
+    requestAutonomousHoodTarget(HoodConstants.AUTO_FULL_LOWERED_POSITION);
+  }
+
+  private void requestAutonomousHoodTarget(double targetPosition) {
+    m_autoHoodTargetPosition =
+        DriverStation.isAutonomousEnabled() && m_hood.isHoodReady()
+            && Double.isFinite(targetPosition)
+            && targetPosition >= HoodConstants.MIN_POSITION
+            && targetPosition <= HoodConstants.MAX_POSITION
+                ? targetPosition : Double.NaN;
+  }
+
+  private boolean isAutonomousHoodDownReached() {
+    return DriverStation.isAutonomousEnabled()
+        && m_autoHoodTargetPosition == HoodConstants.AUTO_FULL_LOWERED_POSITION
+        && m_hood.getTargetPosition() == HoodConstants.AUTO_FULL_LOWERED_POSITION
+        && m_hood.isAtTargetPosition();
+  }
+
+  /**
+   * Waits for a full lowering stroke, rather than letting the auto finish
+   * immediately and canceling the hood request before it moves.
+   * A timeout/interruption captures the current angle for safety.
+   */
+  private Command makeAutonomousHoodDownCommand() {
+    return Commands.sequence(
+        Commands.runOnce(() -> {
+          requestAutonomousHoodDown();
+          m_autoHoodDownStatus = Double.isFinite(m_autoHoodTargetPosition)
+              ? "MOVING TO LOWERED LIMIT" : "BLOCKED: HOOD NOT READY";
+        }),
+        Commands.waitUntil(() -> !Double.isFinite(m_autoHoodTargetPosition)
+            || isAutonomousHoodDownReached())
+            .withTimeout(kAutoHoodDownTimeoutSeconds))
+        .finallyDo(interrupted -> {
+          boolean requested =
+              m_autoHoodTargetPosition == HoodConstants.AUTO_FULL_LOWERED_POSITION;
+          boolean reached = isAutonomousHoodDownReached();
+          m_autoHoodDownStatus = interrupted ? "INTERRUPTED"
+              : !requested ? "BLOCKED: NO VALID TARGET"
+              : reached ? "LOWERED POSITION REACHED"
+              : "TIMEOUT: HOLDING CURRENT POSITION";
+          stopAutonomousHoodTarget();
+        });
   }
 
   private void stopAutonomousHoodTarget() {
-    m_autoHoodMaxRequested = false;
+    m_autoHoodTargetPosition = Double.NaN;
     m_hood.captureCurrentPosition();
   }
 
@@ -817,7 +890,8 @@ public class RobotContainer {
 
   private boolean isAutonomousShooterReady() {
     return DriverStation.isAutonomousEnabled()
-        && m_autoShooterRequested && m_autoHoodMaxRequested
+        && m_autoShooterRequested
+        && m_autoHoodTargetPosition == HoodConstants.AUTO_FULL_RAISED_POSITION
         && m_hood.isHoodReady() && m_hood.isAtTargetPosition()
         && m_shooter.isReadyToFeed()
         && m_autoShooterStartTime >= 0.0
@@ -828,7 +902,7 @@ public class RobotContainer {
     m_feeder.stopFeeder();
     m_autoFeedDeadline = -1.0;
     m_autoShooterRequested = false;
-    m_autoHoodMaxRequested = false;
+    m_autoHoodTargetPosition = Double.NaN;
     m_autoShooterTargetPercent = 0.0;
     m_autoShooterStartTime = -1.0;
     m_shooter.stopShooter();
@@ -1119,9 +1193,9 @@ public class RobotContainer {
    * Use this method to define your button->command mappings.
    */
   private void configureButtonBindings() {
-    // B controls ONLY the shooter. Releasing B stops the shooter, not the feeder.
-    // This command requires only m_shooter, so A and B can operate together.
-    new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getBButton())
+    // Operator B controls only the shooter. A (feeder) may run concurrently.
+    new Trigger(() -> DriverStation.isTeleopEnabled()
+        && m_operatorController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
               m_teleopShootCommandActive = true;
@@ -1133,38 +1207,26 @@ public class RobotContainer {
             },
             m_shooter));
 
-    // Feeder A-button and timed dashboard test are handled by the feeder's
-    // default command, independently of this shooter-only B trigger.
+    // Operator A and the timed dashboard test are handled by the feeder's
+    // default command, independently of the shooter-only B trigger.
 
-    // Move the original A/B toggle functions to unused X/Y buttons.
+    // Driver X/Y remain dedicated to HUB aim and field-relative driving.
     new JoystickButton(m_driverController, XboxController.Button.kX.value)
         .onTrue(new InstantCommand(this::toggleVisionAlign));
 
     new JoystickButton(m_driverController, XboxController.Button.kY.value)
         .onTrue(new InstantCommand(this::toggleFieldRelative));
 
-    // Hold LB to run the intake; release or interruption stops both rollers.
-    new JoystickButton(m_driverController, XboxController.Button.kLeftBumper.value)
+    // Operator X runs intake rollers while held; release stops them.
+    new Trigger(() -> DriverStation.isTeleopEnabled()
+        && m_operatorController.getXButton())
         .whileTrue(Commands.runEnd(
             m_intake::runIntake,
             m_intake::stopIntake,
             m_intake));
 
-    // Xbox controller left-side D-pad / POV.
-    // UP (0 deg): move intake ARM forward; DOWN (180 deg): move it back.
-    // Each command ends and stops when the D-pad is released.
-    // Confirm the actual arm CAN ID, motion directions and physical limits.
-    new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getPOV() == 0)
-        .whileTrue(Commands.runEnd(
-            m_intakeArm::moveForward,
-            m_intakeArm::stopArm,
-            m_intakeArm));
-
-    new Trigger(() -> DriverStation.isTeleopEnabled() && m_driverController.getPOV() == 180)
-        .whileTrue(Commands.runEnd(
-            m_intakeArm::moveBackward,
-            m_intakeArm::stopArm,
-            m_intakeArm));
+    // The operator left-stick Y axis controls intake-arm direction and speed
+    // through the arm's default command, with a hold-to-move timeout.
 
     // Original right-bumper X-lock behavior.
     new JoystickButton(m_driverController, XboxController.Button.kRightBumper.value)
@@ -1277,7 +1339,7 @@ public class RobotContainer {
       m_feederManualStatus = "BLOCKED: TELEOP NOT ENABLED";
       return;
     }
-    boolean aPressed = m_driverController.getAButton();
+    boolean aPressed = m_operatorController.getAButton();
     boolean timedTest = TeleopFeederControl.isDashboardTestActive(
         Timer.getFPGATimestamp(), m_feederDashboardTestDeadline);
     double output = TeleopFeederControl.selectOutput(
@@ -1288,11 +1350,11 @@ public class RobotContainer {
     if (output <= 0.0 && (aPressed || timedTest)) {
       m_feederManualStatus = "BLOCKED: FEEDER SPEED IS ZERO OR INVALID";
     } else if (aPressed) {
-      m_feederManualStatus = "A BUTTON: FORWARD";
+      m_feederManualStatus = "OPERATOR A BUTTON: FORWARD";
     } else if (timedTest) {
       m_feederManualStatus = "DASHBOARD TEST: FORWARD (AUTO STOP)";
     } else {
-      m_feederManualStatus = "IDLE: HOLD A OR PRESS FEEDER TEST (2 s)";
+      m_feederManualStatus = "IDLE: HOLD OPERATOR A OR PRESS FEEDER TEST (2 s)";
     }
   }
 
@@ -1348,6 +1410,7 @@ public class RobotContainer {
     // Stop flywheels even when an auto is interrupted before its Stop marker.
     return auto.finallyDo(interrupted -> {
       stopAutonomousShooter();
+      stopAutonomousHoodTarget();
       stopAutonomousIntake();
       m_intakeArm.stopArm();
     });

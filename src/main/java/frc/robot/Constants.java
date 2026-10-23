@@ -92,8 +92,10 @@ public final class Constants {
 
   public static final class OIConstants {
     public static final int kDriverControllerPort = 0;
+    public static final int kOperatorControllerPort = 1;
     public static final double kDriveDeadband = 0.05;
     public static final double kHoodDeadband = 0.10;
+    public static final double kIntakeArmDeadband = 0.10;
   }
 
   public static final class AutoConstants {
@@ -247,6 +249,8 @@ public final class Constants {
     // On this robot, a fully raised hood has the MIN absolute-encoder value.
     // Keep autonomous point-blank shots at this measured raised endpoint.
     public static final double AUTO_FULL_RAISED_POSITION = MIN_POSITION;
+    // Lowered/rest position is the opposite, MAX encoder endpoint.
+    public static final double AUTO_FULL_LOWERED_POSITION = MAX_POSITION;
     public static final boolean POSITIVE_OUTPUT_INCREASES_ENCODER = false;
     // Encoder fractional-turn units. Tune against measured steady-state error.
     public static final double AUTO_TARGET_TOLERANCE = 0.006;

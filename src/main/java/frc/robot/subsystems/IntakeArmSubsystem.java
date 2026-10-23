@@ -19,7 +19,8 @@ import frc.robot.Constants.IntakeConstants;
 /**
  * Manual rack-and-pinion intake ARM (not the intake rollers or shooter feeder).
  *
- * D-pad UP requests positive arm output, D-pad DOWN negative.
+ * Operator controller left-stick Y requests proportional arm speed and direction
+ * in teleop. Bounded PathPlanner commands can still pulse the arm autonomously.
  * The actual forward/backward direction must be checked on the mechanism.
  *
  * There is no verified absolute position or end-stop sensor yet: the NEO
@@ -97,21 +98,21 @@ public class IntakeArmSubsystem extends SubsystemBase {
       return "ROBOT DISABLED";
     }
     if (timedOut) {
-      return "TIMEOUT: release D-pad before next motion";
+      return "TIMEOUT: center stick / release command before next motion";
     }
     if (commandedOutput > 0.0) {
-      return "D-PAD UP: positive motor output";
+      return "ARM MOTOR POSITIVE OUTPUT";
     }
     if (commandedOutput < 0.0) {
-      return "D-PAD DOWN: negative motor output";
+      return "ARM MOTOR NEGATIVE OUTPUT";
     }
     return "STOPPED: no calibrated end stops / no position hold";
   }
 
   /**
    * Manual output in [-MAX_OUTPUT,+MAX_OUTPUT]. Stops when released or the
-   * maximum continuous actuation time elapses. A timeout requires releasing
-   * the D-pad; holding the button cannot automatically restart the motor.
+   * maximum continuous actuation time elapses. A timeout requires returning
+   * the operator stick to neutral (or releasing a PathPlanner pulse).
    */
   private void setManualOutput(double request) {
     if (!configured || DriverStation.isDisabled() || !Double.isFinite(request)) {
@@ -143,6 +144,19 @@ public class IntakeArmSubsystem extends SubsystemBase {
 
     commandedOutput = IntakeArmConstants.MOTOR_DIRECTION * requested;
     armMotor.set(commandedOutput);
+  }
+
+  /**
+   * Proportional operator control: neutral = stop, full deflection = existing
+   * safe MAX_OUTPUT (20%). Centering also clears the 1.5s motion timeout.
+   */
+  public void setManualSpeed(double normalizedSpeed) {
+    if (!Double.isFinite(normalizedSpeed) || normalizedSpeed == 0.0) {
+      stopArm();
+      return;
+    }
+    setManualOutput(MathUtil.clamp(normalizedSpeed, -1.0, 1.0)
+        * IntakeArmConstants.MAX_OUTPUT);
   }
 
   public void moveForward() {
