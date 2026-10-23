@@ -246,6 +246,10 @@ public final class Constants {
     
     public static final double MIN_POSITION = 0.196;
     public static final double MAX_POSITION = 0.410;
+    
+    public static final double AUTO_FULL_RAISED_POSITION = MIN_POSITION;
+    public static final double AUTO_FULL_LOWERED_POSITION = MAX_POSITION;
+
     public static final boolean POSITIVE_OUTPUT_INCREASES_ENCODER = false;
     // Encoder fractional-turn units. Tune against measured steady-state error.
     public static final double AUTO_TARGET_TOLERANCE = 0.006;
