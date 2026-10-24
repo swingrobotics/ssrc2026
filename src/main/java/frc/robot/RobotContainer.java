@@ -643,6 +643,8 @@ public class RobotContainer {
     NamedCommands.registerCommand("Auto Shoot", makeStationaryAutoShootCommand());
     NamedCommands.registerCommand("Auto Shooter Stop",
         Commands.runOnce(this::stopAutonomousShooter));
+    NamedCommands.registerCommand("Auto Feeder Stop",
+        Commands.runOnce(this::stopAutonomousFeeder));
     NamedCommands.registerCommand("Auto Hood Max",
         Commands.runOnce(this::requestAutonomousHoodMax));
     NamedCommands.registerCommand("Auto Hood Down", makeAutonomousHoodDownCommand());
@@ -899,9 +901,15 @@ public class RobotContainer {
         && Timer.getFPGATimestamp() - m_autoShooterStartTime >= 1.0;
   }
 
-  private void stopAutonomousShooter() {
-    m_feeder.stopFeeder();
+  /** Stop only the feeder, without changing the running shooter or hood target. */
+  private void stopAutonomousFeeder() {
+    // Aborts any in-progress timed feed; the feed command owns its own cleanup.
     m_autoFeedDeadline = -1.0;
+    m_feeder.stopFeeder();
+  }
+
+  private void stopAutonomousShooter() {
+    stopAutonomousFeeder();
     m_autoShooterRequested = false;
     m_autoHoodTargetPosition = Double.NaN;
     m_autoShooterTargetPercent = 0.0;

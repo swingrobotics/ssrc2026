@@ -61,6 +61,15 @@ class PathPlannerAssetsTest {
   }
 
   @Test
+  void standaloneAutoFeederStopIsRegistered() throws IOException {
+    String container = Files.readString(
+        Path.of("src", "main", "java", "frc", "robot", "RobotContainer.java"),
+        StandardCharsets.UTF_8);
+    assertTrue(container.contains("NamedCommands.registerCommand(\"Auto Feeder Stop\""));
+    assertTrue(container.contains("private void stopAutonomousFeeder()"));
+  }
+
+  @Test
   void testAutoStartsAndStopsIntakeThenShoots() throws IOException {
     String json = Files.readString(
         DEPLOY.resolve("autos").resolve("TestAuto.auto"), StandardCharsets.UTF_8);
