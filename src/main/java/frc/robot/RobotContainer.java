@@ -129,7 +129,6 @@ public class RobotContainer {
 
   // The driver's controller
   XboxController m_driverController = new XboxController(OIConstants.kDriverControllerPort);
-  XboxController m_operatorController = new XboxController(OIConstants.kOperatorControllerPort);
 
   // PathPlanner autonomous chooser.
   private final SendableChooser<Command> m_autoChooser;
@@ -218,12 +217,17 @@ public class RobotContainer {
 
     // Button/robot state troubleshooting is separated from operator controls.
     ShuffleboardTab mechanismDebug = Shuffleboard.getTab("Mechanism Diagnostics");
-    mechanismDebug.addBoolean("Operator B Pressed", m_operatorController::getBButton);
-    mechanismDebug.addBoolean("Operator A Pressed", m_operatorController::getAButton);
-    mechanismDebug.addBoolean("Operator X Pressed", m_operatorController::getXButton);
-    mechanismDebug.addBoolean("Operator Y Pressed", m_operatorController::getYButton);
-    mechanismDebug.addDouble("Operator Arm Stick Y",
-        () -> -m_operatorController.getLeftY());
+    mechanismDebug.addBoolean("Driver B Pressed", m_driverController::getBButton);
+    mechanismDebug.addBoolean("Driver A Pressed", m_driverController::getAButton);
+    mechanismDebug.addBoolean("Driver X Pressed", m_driverController::getXButton);
+    mechanismDebug.addBoolean("Driver Y Pressed", m_driverController::getYButton);
+    mechanismDebug.addBoolean("Driver Intake LB Pressed", m_driverController::getLeftBumper);
+    mechanismDebug.addBoolean("Driver Intake Reverse POV Left",
+        () -> m_driverController.getPOV() == 270);
+    mechanismDebug.addBoolean("Driver Arm POV Up",
+        () -> m_driverController.getPOV() == 0);
+    mechanismDebug.addBoolean("Driver Arm POV Down",
+        () -> m_driverController.getPOV() == 180);
     mechanismDebug.addBoolean("Teleop Enabled", DriverStation::isTeleopEnabled);
     mechanismDebug.addBoolean("B Shoot Command Active", () -> m_teleopShootCommandActive);
     mechanismDebug.addBoolean("A Feeder-Only Active", () -> m_manualFeederCommandActive);
@@ -231,12 +235,8 @@ public class RobotContainer {
         () -> DriverStation.isJoystickConnected(OIConstants.kDriverControllerPort));
     mechanismDebug.addString("Controller Port 0 Name",
         () -> DriverStation.getJoystickName(OIConstants.kDriverControllerPort));
-    mechanismDebug.addBoolean("Operator Port 1 Connected",
-        () -> DriverStation.isJoystickConnected(OIConstants.kOperatorControllerPort));
-    mechanismDebug.addString("Operator Port 1 Name",
-        () -> DriverStation.getJoystickName(OIConstants.kOperatorControllerPort));
-    mechanismDebug.addBoolean("Raw Button 1 (Operator A)",
-        () -> m_operatorController.getRawButton(1));
+    mechanismDebug.addBoolean("Raw Button 1 (Driver A)",
+        () -> m_driverController.getRawButton(1));
     mechanismDebug.addBoolean("Feeder Dashboard Test Active", () ->
         TeleopFeederControl.isDashboardTestActive(
             Timer.getFPGATimestamp(), m_feederDashboardTestDeadline));
@@ -562,8 +562,7 @@ public class RobotContainer {
       }
     }, m_shooter));
 
-    // Auto intake keeps running while PathPlanner follows a path. Operator X
-    // temporarily overrides this default command without affecting shooter.
+    // Auto intake persists during paths. Driver LB/POV-left override it in teleop.
     m_intake.setDefaultCommand(new RunCommand(() -> {
       if (!DriverStation.isAutonomousEnabled()) {
         m_intake.stopIntake();
@@ -576,17 +575,9 @@ public class RobotContainer {
       }
     }, m_intake));
 
-    // Operator left-stick Y gives proportional intake arm control in teleop.
-    // PathPlanner arm pulses preempt this default command during autonomous.
-    m_intakeArm.setDefaultCommand(new RunCommand(() -> {
-      if (DriverStation.isTeleopEnabled()) {
-        double stick = MathUtil.applyDeadband(
-            -m_operatorController.getLeftY(), OIConstants.kIntakeArmDeadband);
-        m_intakeArm.setManualSpeed(stick);
-      } else {
-        m_intakeArm.stopArm();
-      }
-    }, m_intakeArm));
+    // Single-controller layout: driver POV up/down moves the intake arm.
+    // PathPlanner arm commands preempt this idle default command in autonomous.
+    m_intakeArm.setDefaultCommand(new RunCommand(m_intakeArm::stopArm, m_intakeArm));
 
     // Own the feeder continuously in an independent command so operator A and
     // the short-lived dashboard test share exactly the same stop/speed logic.
@@ -607,15 +598,15 @@ public class RobotContainer {
         m_shooterSpeedEntry.getDouble(ShooterConstants.DEFAULT_OUTPUT_PERCENT));
   }
 
-  /** Describes the operator controller's A feeder and B shooter controls. */
+  /** Describes the single driver's A feeder and B shooter controls. */
   private String getTeleopShooterFeederStatus() {
     if (!DriverStation.isTeleopEnabled()) return "BLOCKED: TELEOP NOT ENABLED";
-    boolean a = m_operatorController.getAButton();
-    boolean b = m_operatorController.getBButton();
+    boolean a = m_driverController.getAButton();
+    boolean b = m_driverController.getBButton();
     boolean dashboardTest = TeleopFeederControl.isDashboardTestActive(
         Timer.getFPGATimestamp(), m_feederDashboardTestDeadline);
     if (!a && !b && !dashboardTest)
-      return "IDLE: OPERATOR A=FEEDER, B=SHOOTER, OR USE 2s TEST";
+      return "IDLE: DRIVER A=FEEDER, B=SHOOTER, OR USE 2s TEST";
     String shooter = b
         ? (m_teleopShootCommandActive && m_shooter.isRunning()
             ? "SHOOTER RUNNING" : "SHOOTER WAITING / ZERO OUTPUT")
@@ -1202,9 +1193,9 @@ public class RobotContainer {
    * Use this method to define your button->command mappings.
    */
   private void configureButtonBindings() {
-    // Operator B controls only the shooter. A (feeder) may run concurrently.
+    // Driver B controls only the shooter. Driver A (feeder) can run concurrently.
     new Trigger(() -> DriverStation.isTeleopEnabled()
-        && m_operatorController.getBButton())
+        && m_driverController.getBButton())
         .whileTrue(Commands.runEnd(
             () -> {
               m_teleopShootCommandActive = true;
@@ -1216,7 +1207,7 @@ public class RobotContainer {
             },
             m_shooter));
 
-    // Operator A and the timed dashboard test are handled by the feeder's
+    // Driver A and the timed dashboard test are handled by the feeder's
     // default command, independently of the shooter-only B trigger.
 
     // Driver X/Y remain dedicated to HUB aim and field-relative driving.
@@ -1226,25 +1217,38 @@ public class RobotContainer {
     new JoystickButton(m_driverController, XboxController.Button.kY.value)
         .onTrue(new InstantCommand(this::toggleFieldRelative));
 
-    // Operator X intakes forward; Y reverses. Y has priority if both are held,
-    // so the two commands cannot repeatedly interrupt each other.
+    // Original one-controller layout: LB intakes forward. The newly added
+    // reverse function uses POV left, without conflicting with driver Y.
+    // POV left takes priority if LB is held at the same time.
     new Trigger(() -> DriverStation.isTeleopEnabled()
-        && m_operatorController.getXButton()
-        && !m_operatorController.getYButton())
+        && m_driverController.getLeftBumper()
+        && m_driverController.getPOV() != 270)
         .whileTrue(Commands.runEnd(
             m_intake::runIntake,
             m_intake::stopIntake,
             m_intake));
 
     new Trigger(() -> DriverStation.isTeleopEnabled()
-        && m_operatorController.getYButton())
+        && m_driverController.getPOV() == 270)
         .whileTrue(Commands.runEnd(
             m_intake::reverseIntake,
             m_intake::stopIntake,
             m_intake));
 
-    // The operator left-stick Y axis controls intake-arm direction and speed
-    // through the arm's default command, with a hold-to-move timeout.
+    // Restore driver POV up/down intake-arm control from af17387.
+    new Trigger(() -> DriverStation.isTeleopEnabled()
+        && m_driverController.getPOV() == 0)
+        .whileTrue(Commands.runEnd(
+            m_intakeArm::moveForward,
+            m_intakeArm::stopArm,
+            m_intakeArm));
+
+    new Trigger(() -> DriverStation.isTeleopEnabled()
+        && m_driverController.getPOV() == 180)
+        .whileTrue(Commands.runEnd(
+            m_intakeArm::moveBackward,
+            m_intakeArm::stopArm,
+            m_intakeArm));
 
     // Original right-bumper X-lock behavior.
     new JoystickButton(m_driverController, XboxController.Button.kRightBumper.value)
@@ -1357,7 +1361,7 @@ public class RobotContainer {
       m_feederManualStatus = "BLOCKED: TELEOP NOT ENABLED";
       return;
     }
-    boolean aPressed = m_operatorController.getAButton();
+    boolean aPressed = m_driverController.getAButton();
     boolean timedTest = TeleopFeederControl.isDashboardTestActive(
         Timer.getFPGATimestamp(), m_feederDashboardTestDeadline);
     double output = TeleopFeederControl.selectOutput(
@@ -1368,11 +1372,11 @@ public class RobotContainer {
     if (output <= 0.0 && (aPressed || timedTest)) {
       m_feederManualStatus = "BLOCKED: FEEDER SPEED IS ZERO OR INVALID";
     } else if (aPressed) {
-      m_feederManualStatus = "OPERATOR A BUTTON: FORWARD";
+      m_feederManualStatus = "DRIVER A BUTTON: FORWARD";
     } else if (timedTest) {
       m_feederManualStatus = "DASHBOARD TEST: FORWARD (AUTO STOP)";
     } else {
-      m_feederManualStatus = "IDLE: HOLD OPERATOR A OR PRESS FEEDER TEST (2 s)";
+      m_feederManualStatus = "IDLE: HOLD DRIVER A OR PRESS FEEDER TEST (2 s)";
     }
   }
 
