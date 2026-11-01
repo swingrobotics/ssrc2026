@@ -31,7 +31,7 @@ public final class Constants {
     // Driving Parameters - Note that these are not the maximum capable speeds of
     // the robot, rather the allowed maximum speeds
     //public static final double kMaxSpeedMetersPerSecond = 4.8;
-    public static final double kMaxSpeedMetersPerSecond = 3;  //위쪽 주석을 수정함
+    public static final double kMaxSpeedMetersPerSecond = 0.5;  //위쪽 주석을 수정함
     //public static final double kMaxAngularSpeed = 2 * Math.PI; // radians per second
     public static final double kMaxAngularSpeed = 1 * Math.PI; // radians per second  위쪽 주석을 수정함
 
@@ -131,7 +131,7 @@ public final class Constants {
     // Conservative first-power-on limits; tune only after confirming roller direction.
     public static final int CURRENT_LIMIT_AMPS = 40;
     public static final double MAX_OUTPUT = 1.00;
-    public static final double DEFAULT_OUTPUT = 0.70;
+    public static final double DEFAULT_OUTPUT = 0.80;
   }
 
   /** 
@@ -146,7 +146,7 @@ public final class Constants {
     public static final int MOTOR_CAN_ID = 15; // TODO: actual unique CAN ID (15-62).
     public static final double MOTOR_DIRECTION = -1.0; // Verify physical direction.
     public static final int CURRENT_LIMIT_AMPS = 40;
-    public static final double DEFAULT_OUTPUT = 0.15;
+    public static final double DEFAULT_OUTPUT = 0.;
     public static final double MAX_OUTPUT = 0.20;
     public static final double MAX_CONTINUOUS_RUN_SECONDS = 1.5;
   }
@@ -161,7 +161,7 @@ public final class Constants {
     // Motor 9 was previously driven with negative duty cycle.
     public static final double MOTOR_DIRECTION = -1.0;
     // Shooter uses direct motor duty-cycle (%) restored from older branches.
-    public static final double DEFAULT_OUTPUT_PERCENT = 85.0;
+    public static final double DEFAULT_OUTPUT_PERCENT = 70.0;
     // Keep the current branch's measured 40 A motor current limits.
     public static final int CURRENT_LIMIT_AMPS = 40;
     // Historical percent-output version allowed up to 75%.
@@ -246,7 +246,7 @@ public final class Constants {
     
     public static final double MIN_POSITION = 0.196;
     public static final double MAX_POSITION = 0.410;
-    
+
     public static final double AUTO_FULL_RAISED_POSITION = MIN_POSITION;
     public static final double AUTO_FULL_LOWERED_POSITION = MAX_POSITION;
 

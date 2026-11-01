@@ -5,15 +5,15 @@
     "data": {
       "commands": [
         {
-          "type": "named",
-          "data": {
-            "name": "Auto Hood Max"
-          }
-        },
-        {
           "type": "path",
           "data": {
             "pathName": "move 1"
+          }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": "Auto Intake Arm Forward"
           }
         },
         {
@@ -41,15 +41,33 @@
           }
         },
         {
-          "type": "named",
-          "data": {
-            "name": "Auto Shooter Start"
-          }
-        },
-        {
           "type": "path",
           "data": {
             "pathName": "move 2"
+          }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": "Auto Intake Reverse"
+          }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": "Auto Intake Arm Backward"
+          }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": "Auto Hood Max"
+          }
+        },
+        {
+          "type": "named",
+          "data": {
+            "name": "Auto Shooter Start"
           }
         },
         {
